@@ -41,7 +41,7 @@ import okhttp3.WebSocketListener;
  */
 public class RealtimeVoiceController {
     public enum Provider {
-        GEMINI("Gemini Live", "gemini", "gemini-2.5-flash-native-audio-preview-12-2025", ""),
+        GEMINI("Gemini Live", "gemini", "gemini-3.1-flash-live-preview", ""),
         OPENAI("OpenAI Realtime", "openai", "gpt-realtime-2.1-mini", "wss://api.openai.com/v1/realtime"),
         CUSTOM_OPENAI("Custom OpenAI-compatible", "custom", "", "");
 
@@ -99,6 +99,16 @@ public class RealtimeVoiceController {
     private boolean manualDisconnect = false;
     private String reconnectApiKey = "";
     private final android.os.Handler retryHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable geminiSetupTimeout = () -> {
+        if (provider == Provider.GEMINI && connected && !sessionReady) {
+            status("Gemini setup timed out after 10s ❌");
+            WebSocket ws = socket;
+            socket = null;
+            connected = false;
+            if (ws != null) { try { ws.close(1000, "setup timeout"); } catch (Exception ignored) {} }
+            if (listener != null) listener.onAiDisconnected();
+        }
+    };
 
     public RealtimeVoiceController(Context context, Listener listener) {
         this.context = context.getApplicationContext();
@@ -145,7 +155,9 @@ public class RealtimeVoiceController {
                 if (RealtimeVoiceController.this.provider == Provider.GEMINI) {
                     configureGeminiSession(lastInstructions);
                     // Gemini signals setupComplete before we show READY/start the mic.
-                    status("Gemini connected — setting up audio…");
+                    status("Gemini connected — setting up audio (max 10s)…");
+                    retryHandler.removeCallbacks(geminiSetupTimeout);
+                    retryHandler.postDelayed(geminiSetupTimeout, 10_000L);
                 } else {
                     configureOpenAiSession(lastInstructions);
                     status("OpenAI socket connected — validating session…");
@@ -168,14 +180,6 @@ public class RealtimeVoiceController {
                 sessionReady = false;
                 stopMicrophone();
                 stopPlayback();
-                if (!manualDisconnect && RealtimeVoiceController.this.provider == Provider.GEMINI
-                        && !wasReady && (code == 1008 || code == 1011) && geminiRetryCount < 2) {
-                    geminiRetryCount++;
-                    long delay = geminiRetryCount == 1 ? 1800L : 4000L;
-                    status("Gemini Live was busy — retrying " + geminiRetryCount + "/2…");
-                    retryHandler.postDelayed(() -> reconnectGemini(), delay);
-                    return;
-                }
                 status("AI disconnected (" + code + ")" + (reason == null || reason.isEmpty() ? "" : ": " + reason));
                 if (listener != null) listener.onAiDisconnected();
             }
@@ -211,7 +215,9 @@ public class RealtimeVoiceController {
                 connected = true;
                 sessionReady = false;
                 configureGeminiSession(lastInstructions);
-                status("Gemini connected — setting up audio…");
+                status("Gemini connected — setting up audio (max 10s)…");
+                retryHandler.removeCallbacks(geminiSetupTimeout);
+                retryHandler.postDelayed(geminiSetupTimeout, 10_000L);
             }
             @Override public void onMessage(WebSocket webSocket, String text) { handleGeminiEvent(text); }
             @Override public void onClosing(WebSocket webSocket, int code, String reason) { webSocket.close(code, reason); }
@@ -222,13 +228,6 @@ public class RealtimeVoiceController {
                 sessionReady = false;
                 stopMicrophone();
                 stopPlayback();
-                if (!manualDisconnect && !wasReady && (code == 1008 || code == 1011) && geminiRetryCount < 2) {
-                    geminiRetryCount++;
-                    long delay = geminiRetryCount == 1 ? 1800L : 4000L;
-                    status("Gemini Live was busy — retrying " + geminiRetryCount + "/2…");
-                    retryHandler.postDelayed(() -> reconnectGemini(), delay);
-                    return;
-                }
                 status("AI disconnected (" + code + ")" + (reason == null || reason.isEmpty() ? "" : ": " + reason));
                 if (listener != null) listener.onAiDisconnected();
             }
@@ -434,8 +433,12 @@ public class RealtimeVoiceController {
         try {
             JSONObject setup = new JSONObject();
             setup.put("model", "models/" + model);
+
             JSONArray modalities = new JSONArray();
             modalities.put("AUDIO");
+            JSONObject generationConfig = new JSONObject();
+            generationConfig.put("responseModalities", modalities);
+            setup.put("generationConfig", generationConfig);
 
             JSONObject systemInstruction = new JSONObject();
             JSONArray parts = new JSONArray();
@@ -445,26 +448,11 @@ public class RealtimeVoiceController {
             systemInstruction.put("parts", parts);
             setup.put("systemInstruction", systemInstruction);
 
-            JSONObject prebuilt = new JSONObject();
-            prebuilt.put("voiceName", "Leda");
-            JSONObject voiceConfig = new JSONObject();
-            voiceConfig.put("prebuiltVoiceConfig", prebuilt);
-            JSONObject speechConfig = new JSONObject();
-            speechConfig.put("voiceConfig", voiceConfig);
-
-            // Native-audio Live models auto-detect language. Do not set languageCode;
-            // Gemini can close with 1007 when a native-audio model receives one.
-            // Keep response modalities and voice configuration inside generationConfig.
-            JSONObject generationConfig = new JSONObject();
-            generationConfig.put("responseModalities", modalities);
-            generationConfig.put("speechConfig", speechConfig);
-            setup.put("generationConfig", generationConfig);
-
             JSONObject root = new JSONObject();
             root.put("setup", setup);
             socket.send(root.toString());
         } catch (JSONException e) {
-            status("Gemini setup error");
+            status("Gemini setup error: " + e.getMessage());
         }
     }
 
@@ -677,6 +665,7 @@ public class RealtimeVoiceController {
         try {
             JSONObject event = new JSONObject(text);
             if (event.has("setupComplete")) {
+                retryHandler.removeCallbacks(geminiSetupTimeout);
                 geminiRetryCount = 0;
                 sessionReady = true;
                 status("Gemini Live READY 🎙️");

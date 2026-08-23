@@ -1,10 +1,11 @@
-# MiRobotAI v0.9.4
+# MiRobotAI v0.9.5
 
-Gemini Live stability update.
+Fixes the long Gemini “setting up audio” wait.
 
-- Defaults Gemini to the official free-tier `gemini-2.5-flash-native-audio-preview-12-2025` Live model.
-- Migrates the previous Gemini 3.1 setting automatically.
-- Uses the youthful `Leda` voice.
-- API test checks access to the exact Live model, not just the account key.
-- Retries transient Gemini WebSocket 1008/1011 setup failures twice.
-- Direct audio-in/audio-out; no Android TTS.
+- Uses current `gemini-3.1-flash-live-preview` by default.
+- Uses a minimal Gemini Live setup first (audio + persona only) to reduce setup failures.
+- No automatic 1008/1011 retry loop.
+- Setup has a 10-second timeout, so it never hangs indefinitely.
+- Once the realtime session is stable, voice selection can be added back safely.
+
+Build with the included GitHub Actions workflow and install the debug APK.
