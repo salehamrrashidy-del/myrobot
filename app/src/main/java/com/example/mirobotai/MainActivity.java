@@ -65,6 +65,8 @@ public class MainActivity extends ComponentActivity implements
     private CheckBox visionToggle;
     private CheckBox companionToggle;
     private CheckBox roamToggle;
+    private CheckBox edgeGuardToggle;
+    private TextView edgeGuardStatusText;
     private TextView aiStatusText;
     private EditText apiKeyInput;
     private EditText modelInput;
@@ -76,6 +78,12 @@ public class MainActivity extends ComponentActivity implements
     private ApiKeyStore apiKeyStore;
     private SharedPreferences aiPrefs;
     private long lastFocusAiPromptMs = 0L;
+    private volatile boolean surfaceCalibrated = false;
+    private volatile boolean surfaceSafe = false;
+    private volatile int surfaceEdgeSide = 0;
+    private volatile long lastSurfaceFrameMs = 0L;
+    private volatile long lastEdgeUiMs = 0L;
+    private volatile boolean aiSpeechBusy = false;
     private SeekBar speedBar;
     private ArrayAdapter<String> listAdapter;
     private final List<BluetoothDevice> devices = new ArrayList<>();
@@ -100,6 +108,8 @@ public class MainActivity extends ComponentActivity implements
         visionToggle = findViewById(R.id.visionToggle);
         companionToggle = findViewById(R.id.companionToggle);
         roamToggle = findViewById(R.id.roamToggle);
+        edgeGuardToggle = findViewById(R.id.edgeGuardToggle);
+        edgeGuardStatusText = findViewById(R.id.edgeGuardStatusText);
         aiStatusText = findViewById(R.id.aiStatusText);
         apiKeyInput = findViewById(R.id.apiKeyInput);
         modelInput = findViewById(R.id.modelInput);
@@ -152,31 +162,49 @@ public class MainActivity extends ComponentActivity implements
         visionToggle.setOnCheckedChangeListener((button, checked) -> {
             if (checked) startVisionIfAllowed();
             else {
-                // Safe roaming depends on the camera edge guard, so turning vision off
-                // also turns autonomous roaming off.
-                if (roamToggle != null && roamToggle.isChecked()) roamToggle.setChecked(false);
                 vision.stop();
                 faceView.look(0f);
                 visionStatusText.setText("Vision OFF");
             }
         });
-        companionToggle.setOnCheckedChangeListener((button, checked) -> companion.setCompanionMode(checked));
+        companionToggle.setOnCheckedChangeListener((button, checked) -> {
+            if (checked) {
+                if (!visionToggle.isChecked()) visionToggle.setChecked(true);
+                startVisionIfAllowed();
+            }
+            companion.setCompanionMode(checked);
+        });
         roamToggle.setOnCheckedChangeListener((button, checked) -> {
-            if (!checked) {
-                companion.setRoamMode(false);
-                return;
+            if (checked && edgeGuardToggle.isChecked()) {
+                if (!visionToggle.isChecked()) visionToggle.setChecked(true);
+                startVisionIfAllowed();
+                if (!surfaceCalibrated) {
+                    edgeGuardStatusText.setText("Edge guard: tap CALIBRATE SAFE SURFACE before forward roaming");
+                }
             }
-            if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
-                visionStatusText.setText("Camera permission is required for safe roam");
-                requestNeededPermissions();
-                roamToggle.setChecked(false);
-                return;
+            companion.setRoamMode(checked);
+        });
+        edgeGuardToggle.setOnCheckedChangeListener((button, checked) -> {
+            if (checked) {
+                if (!visionToggle.isChecked()) visionToggle.setChecked(true);
+                startVisionIfAllowed();
+                edgeGuardStatusText.setText(surfaceCalibrated
+                        ? "Edge guard ON — watching the surface"
+                        : "Edge guard ON — tap CALIBRATE SAFE SURFACE");
+            } else {
+                edgeGuardStatusText.setText("Edge guard OFF — use free roam only on the floor");
             }
+        });
+        findViewById(R.id.calibrateEdgeButton).setOnClickListener(v -> {
             if (!visionToggle.isChecked()) visionToggle.setChecked(true);
-            // Learn the current safe tabletop/floor while the robot is still. The
-            // CompanionController refuses forward motion until this finishes.
-            vision.resetCliffCalibration();
-            companion.setRoamMode(true);
+            startVisionIfAllowed();
+            stopRobot();
+            companion.pauseFor(2200L);
+            surfaceCalibrated = false;
+            surfaceSafe = false;
+            lastSurfaceFrameMs = 0L;
+            vision.calibrateSafeSurface();
+            edgeGuardStatusText.setText("Calibrating… keep the robot still in the SAFE middle of the table");
         });
 
         findViewById(R.id.happyButton).setOnClickListener(v -> temporaryEmotion(Emotion.HAPPY, 2500));
@@ -396,30 +424,78 @@ public class MainActivity extends ComponentActivity implements
         });
     }
 
+    @Override public void onSurfaceSafety(boolean calibrated, boolean safe, float confidence, int edgeSide, String reason) {
+        boolean wasSafe = surfaceSafe;
+        long now = System.currentTimeMillis();
+        surfaceCalibrated = calibrated;
+        surfaceSafe = safe;
+        surfaceEdgeSide = edgeSide;
+        lastSurfaceFrameMs = now;
+
+        boolean urgentStop = calibrated && !safe && wasSafe;
+        if (!urgentStop && now - lastEdgeUiMs < 300L) return;
+        lastEdgeUiMs = now;
+
+        runOnUiThread(() -> {
+            if (edgeGuardStatusText == null) return;
+            if (!edgeGuardToggle.isChecked()) {
+                edgeGuardStatusText.setText("Edge guard OFF — use free roam only on the floor");
+            } else if (!calibrated) {
+                edgeGuardStatusText.setText("Edge guard: " + reason);
+            } else if (safe) {
+                edgeGuardStatusText.setText("Edge guard ✅ " + reason);
+            } else {
+                edgeGuardStatusText.setText("EDGE WARNING ⛔ " + reason);
+                stopRobot();
+            }
+        });
+    }
+
     @Override public void onVisionStatus(String message) {
         runOnUiThread(() -> visionStatusText.setText(message));
     }
 
-    @Override public void onGroundSafety(boolean ready, boolean safe, boolean edgeRisk,
-                                         float confidence, int edgeSide, String message) {
-        runOnUiThread(() -> {
-            companion.groundSafety(ready, safe, edgeRisk, confidence, edgeSide);
-            visionStatusText.setText(message);
-            if (edgeRisk) stopRobot();
-        });
-    }
-
     // ---- Companion motion sink ----
     @Override public boolean robotReady() {
-        return ble != null && ble.isReady();
+        return ble != null && ble.isReady() && !aiSpeechBusy;
+    }
+
+    @Override public boolean safetyKnown() {
+        if (edgeGuardToggle == null || !edgeGuardToggle.isChecked()) return true;
+        if (visionToggle == null || !visionToggle.isChecked()) return false;
+        long age = System.currentTimeMillis() - lastSurfaceFrameMs;
+        return surfaceCalibrated && age >= 0L && age < 1200L;
+    }
+
+    @Override public boolean forwardSafe() {
+        if (edgeGuardToggle == null || !edgeGuardToggle.isChecked()) return true;
+        return safetyKnown() && surfaceSafe;
+    }
+
+    @Override public int unsafeEdgeSide() {
+        return surfaceEdgeSide;
     }
 
     @Override public void autoPulse(int forward, int turn, int delta, long durationMs) {
         runOnUiThread(() -> {
             if (!robotReady()) return;
+            if (forward > 0 && !forwardSafe()) {
+                stopRobot();
+                if (edgeGuardToggle != null && edgeGuardToggle.isChecked()) {
+                    statusText.setText("Edge guard blocked forward movement ⛔");
+                }
+                return;
+            }
+            // Autonomous reverse is intentionally blocked when the visual edge guard is ON:
+            // the front camera cannot see a cliff behind the robot. Manual reverse still works.
+            if (forward < 0 && edgeGuardToggle != null && edgeGuardToggle.isChecked()) {
+                stopRobot();
+                statusText.setText("Edge guard blocked autonomous reverse");
+                return;
+            }
             handler.removeCallbacks(autoStopRunnable);
             sendMove(forward, turn, Math.max(6, Math.min(28, delta)));
-            handler.postDelayed(autoStopRunnable, Math.max(70L, Math.min(450L, durationMs)));
+            handler.postDelayed(autoStopRunnable, Math.max(70L, Math.min(650L, durationMs)));
         });
     }
 
@@ -653,6 +729,7 @@ public class MainActivity extends ComponentActivity implements
     }
 
     @Override public void onAiDisconnected() {
+        aiSpeechBusy = false;
         runOnUiThread(() -> {
             aiConnectButton.setText("Connect AI");
             faceView.setTalking(false);
@@ -661,30 +738,36 @@ public class MainActivity extends ComponentActivity implements
     }
 
     @Override public void onUserSpeechStarted() {
+        aiSpeechBusy = true;
         runOnUiThread(() -> {
-            companion.pauseFor(4500L);
+            stopRobot();
             faceView.setTalking(false);
             faceView.setEmotion(Emotion.CURIOUS);
         });
     }
 
     @Override public void onUserSpeechStopped() {
+        aiSpeechBusy = false;
         runOnUiThread(() -> {
             moodEngine.talkedTo();
+            companion.pauseFor(450L);
             if (ai != null && ai.isConnected()) ai.updatePersona(buildAiPersona());
         });
     }
 
     @Override public void onAssistantAudioStarted() {
+        aiSpeechBusy = true;
         runOnUiThread(() -> {
-            companion.pauseFor(6000L);
+            stopRobot();
             faceView.setEmotion(Emotion.TALKING);
             faceView.setTalking(true);
         });
     }
 
     @Override public void onAssistantAudioDone() {
+        aiSpeechBusy = false;
         runOnUiThread(() -> {
+            companion.pauseFor(350L);
             faceView.setTalking(false);
             faceView.setEmotion(moodEngine.currentEmotion());
         });

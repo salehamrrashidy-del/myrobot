@@ -1,36 +1,31 @@
-# MiRobotAI v1.0.0 — Camera Safe Roam
+# MiRobotAI v0.10.0 — safer roaming + working companion mode
 
-This build keeps the working v0.9.9 AI, saved API-key behavior, voice selector, BLE motor control, face tracking, and emotion system, and adds a conservative camera safety layer for autonomous roaming.
+This build keeps the v0.9.9 AI/key/voice work and focuses on autonomy.
 
-## New in v1.0.0
+## What changed
 
-- **Camera table/cliff guard** uses the lower part of the front-camera image while the screen remains the robot face.
-- When Safe Roam is switched on, the robot stays still briefly while the camera learns the appearance of the current safe surface.
-- **No autonomous forward motion** is allowed until the guard reports a stable SAFE surface.
-- If the camera sees a likely edge/drop, movement stops immediately, the robot makes one tiny reverse pulse, turns away, and waits for a safe view before moving again.
-- Random reverse roaming was removed because a front camera cannot see a rear cliff.
-- Forward roam pulses are shorter and slower than before, with a camera re-check between moves.
-- Roaming automatically turns off if camera vision is disabled.
-- Existing Companion Mode still turns toward faces but does not drive toward them.
+- **Companion mode now actively searches for you.** If it cannot see a face, it makes small scan turns.
+- **Companion mode can gently approach you.** When your face is centered and still looks far away, it uses short forward pulses.
+- Face detection now accepts smaller/farther faces (`minFaceSize` lowered from 0.16 to 0.08), so companion mode can react before you are already very close.
+- **Free roam is more visible and regular** with short forward/turn exploration pulses.
+- Removed the old long 4.5–6 second autonomy pauses around every AI speech event. Movement stops while either person is actually speaking, then resumes shortly afterward.
+- **Experimental camera table-edge guard** added.
+  - Put the robot safely in the middle of the table.
+  - Aim the front camera slightly downward so the lower part of its view contains the tabletop.
+  - Tap **CALIBRATE SAFE SURFACE** and keep it still for about a second.
+  - With Edge Guard ON, autonomous forward movement is blocked unless the camera has a fresh calibrated safe-surface reading.
+  - If the image changes like a possible edge, the robot stops and free roam makes only a tiny turn-away pulse.
+  - Autonomous reverse is disabled while Edge Guard is ON because a front camera cannot see a cliff behind the robot.
 
-## Important physical setup
+## Important safety limitation
 
-The front camera must be able to see **some of the tabletop/floor in the lower part of its view**. If the phone is perfectly upright and the camera only sees the room, software cannot reliably see a table edge. Tilt the phone/robot head slightly downward if needed.
+A phone camera is **not a real cliff sensor**. Lighting, shadows, a patterned/glass table, camera angle, or motion blur can fool visual edge detection. Do not leave this robot unattended on a high table. Test the guard at very low speed while keeping a hand ready to catch the robot. For dependable table-top roaming, dedicated downward-facing IR/ToF cliff sensors are much safer.
 
-This camera guard is a **heuristic extra safety layer, not a true depth/cliff sensor**. For unattended use on raised tables, a downward IR/ToF cliff sensor is still the reliable hardware solution. Test v1.0.0 on the floor first, then near a table edge while keeping a hand ready to catch the robot.
+## Quick test
 
-## Safe Roam test
+1. Install/update the APK and reconnect the Mi Robot controller until it says **ROBOT READY**.
+2. For floor testing, turn **Table edge guard OFF**, then enable **Free roam**. It should begin moving within a couple of seconds.
+3. For table testing, leave **Table edge guard ON**, put the robot in the safe center, tap **CALIBRATE SAFE SURFACE**, wait for **Edge guard ✅**, then enable **Free roam**.
+4. For **Companion mode**, keep Camera face tracking ON and stand/sit in front of the robot. It should turn toward your face and, if you look far enough away, take small forward steps toward you.
 
-1. Put the robot on the floor or in the middle of a large table, away from the edge.
-2. Make sure **Camera face tracking** is ON.
-3. Turn on **Safe roam — camera edge guard**.
-4. Keep the robot still while it says `Table guard learning…`.
-5. Wait for `Table guard READY ✅` / `Table guard SAFE ✅`.
-6. Let it roam slowly.
-7. During the first table-edge test, keep your hand next to the robot as a physical backup.
-
-## Build
-
-Upload the project to GitHub and run the included GitHub Actions workflow. The artifact is named `MiRobotAI-v1.0.0-debug-apk`.
-
-The development signing key remains the same as v0.9.9, so Android should install this as an update and keep your saved API key.
+GitHub Actions artifact: `MiRobotAI-v0.10.0-debug-apk`

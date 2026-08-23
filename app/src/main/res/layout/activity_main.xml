@@ -62,7 +62,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
                 android:layout_marginBottom="4dp"
-                android:text="v1.0.0 — CAMERA SAFE ROAM"
+                android:text="v0.10.0 — SAFER ROAM + COMPANION"
                 android:textColor="#FFFFD54F"
                 android:textSize="12sp"
                 android:textStyle="bold" />
@@ -208,15 +208,38 @@
                 android:id="@+id/roamToggle"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Safe roam — camera edge guard"
+                android:text="Free roam — explore with short moves"
                 android:textColor="#FFFFFFFF" />
+
+            <CheckBox
+                android:id="@+id/edgeGuardToggle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:checked="true"
+                android:text="Table edge guard — camera safety"
+                android:textColor="#FFFFFFFF" />
+
+            <Button
+                android:id="@+id/calibrateEdgeButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="CALIBRATE SAFE SURFACE" />
+
+            <TextView
+                android:id="@+id/edgeGuardStatusText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Edge guard ON — calibrate in the safe middle of the table"
+                android:textColor="#FFFFD54F"
+                android:textSize="11sp" />
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Safe roam waits for the camera to learn the surface, then only makes tiny forward steps when the table guard says SAFE. Keep the lower part of the front camera view pointed slightly toward the table/floor. Camera safety is extra protection, not a guaranteed cliff sensor."
+                android:layout_marginTop="4dp"
+                android:text="For a table: point the front camera slightly downward, put the robot well away from the edge, then calibrate once. The camera guard is experimental — do not leave the robot unattended on a high surface."
                 android:textColor="#99FFFFFF"
-                android:textSize="11sp" />
+                android:textSize="10sp" />
 
             <Button
                 android:id="@+id/scanButton"
