@@ -12,6 +12,7 @@ import java.util.Random;
 public class CompanionController {
     public interface MotionSink {
         boolean robotReady();
+        boolean forwardSafe();
         void autoPulse(int forward, int turn, int delta, long durationMs);
         void autoStop();
         void showTemporaryEmotion(Emotion emotion, long durationMs);
@@ -24,6 +25,7 @@ public class CompanionController {
 
     private boolean companionMode = false;
     private boolean roamMode = false;
+    private boolean cliffRisk = false;
     private boolean facePresent = false;
     private float faceX = 0f;
     private float faceSize = 0f;
@@ -32,6 +34,7 @@ public class CompanionController {
     private long manualPauseUntilMs = 0L;
     private long lastTrackMoveMs = 0L;
     private long faceCenteredSinceMs = 0L;
+    private long lastCliffTurnMs = 0L;
 
     private final Runnable loop = new Runnable() {
         @Override public void run() {
@@ -65,7 +68,21 @@ public class CompanionController {
         roamMode = enabled;
         scheduleNextRoam(350L);
         if (!enabled && !companionMode) sink.autoStop();
-        sink.onCompanionStatus(enabled ? "Roam mode ON — exploring" : "Roam mode OFF");
+        sink.onCompanionStatus(enabled ? "Roam mode ON — slow + edge-aware" : "Roam mode OFF");
+    }
+
+    public boolean isRoamMode() { return roamMode; }
+    public boolean isCompanionMode() { return companionMode; }
+
+    public void setCliffRisk(boolean risky) {
+        cliffRisk = risky;
+        if (risky) {
+            sink.autoStop();
+            sink.showTemporaryEmotion(Emotion.SURPRISED, 900L);
+            sink.onCompanionStatus("EDGE AHEAD ⚠️ — forward blocked");
+        } else {
+            scheduleNextRoam(800L);
+        }
     }
 
     public void faceSeen(float x, float size) {
@@ -103,6 +120,19 @@ public class CompanionController {
         long now = System.currentTimeMillis();
         if (!sink.robotReady() || now < manualPauseUntilMs) return;
 
+        // Local safety always wins over companion/AI/roam behaviour.
+        if (cliffRisk || !sink.forwardSafe()) {
+            sink.autoStop();
+            // A tiny in-place turn may help the camera look away from the table edge.
+            // Keep it very short because the camera cannot see behind the robot.
+            if (roamMode && now - lastCliffTurnMs > 1600L) {
+                int turn = random.nextBoolean() ? +1 : -1;
+                sink.autoPulse(0, turn, 8, 105L);
+                lastCliffTurnMs = now;
+            }
+            return;
+        }
+
         // Companion mode has first priority: face-center the body.
         if (facePresent && companionMode) {
             float error = Math.abs(faceX);
@@ -111,17 +141,17 @@ public class CompanionController {
                 int delta;
                 long pulseMs;
                 if (error > 0.55f) {
-                    delta = 24;
-                    pulseMs = 230L;
+                    delta = 22;
+                    pulseMs = 210L;
                 } else if (error > 0.30f) {
-                    delta = 20;
-                    pulseMs = 205L;
+                    delta = 18;
+                    pulseMs = 185L;
                 } else if (error > 0.17f) {
-                    delta = 16;
-                    pulseMs = 175L;
+                    delta = 15;
+                    pulseMs = 160L;
                 } else {
-                    delta = 13;
-                    pulseMs = 145L;
+                    delta = 12;
+                    pulseMs = 135L;
                 }
                 sink.autoPulse(0, turn, delta, pulseMs);
                 lastTrackMoveMs = now;
@@ -133,41 +163,37 @@ public class CompanionController {
                 if (faceCenteredSinceMs == 0L) faceCenteredSinceMs = now;
                 sink.autoStop();
 
-                // Roam can still make the robot feel alive while a face is centered,
-                // but only with a tiny occasional look-around turn, never a forward nudge.
-                if (roamMode && now >= nextRoamMs && now - faceCenteredSinceMs > 2500L) {
+                if (roamMode && now >= nextRoamMs && now - faceCenteredSinceMs > 3000L) {
                     int turn = random.nextBoolean() ? +1 : -1;
-                    sink.autoPulse(0, turn, 10, 130L);
-                    scheduleNextRoam(2500L);
+                    sink.autoPulse(0, turn, 9, 110L);
+                    scheduleNextRoam(2800L);
                 }
                 return;
             }
         }
 
-        // v0.8 fix: roam is no longer blocked just because the camera sees a face.
-        // If Companion mode is OFF, the robot can still explore the room.
+        // Edge-aware gentle roaming. Forward movement is deliberately rarer than turning.
         if (roamMode && now >= nextRoamMs) {
             int pick = random.nextInt(100);
-
-            // When a face looks close, avoid forward nudges and mostly turn/look.
             boolean faceLooksClose = facePresent && faceSize > 0.16f;
-            if (faceLooksClose || pick < 62) {
+
+            if (faceLooksClose || pick < 70) {
                 int turn = random.nextBoolean() ? +1 : -1;
-                sink.autoPulse(0, turn, 12 + random.nextInt(5), 210L + random.nextInt(130));
-            } else if (pick < 88) {
-                // A noticeable but still gentle forward exploration pulse.
-                sink.autoPulse(+1, 0, 11 + random.nextInt(4), 230L + random.nextInt(120));
+                sink.autoPulse(0, turn, 10 + random.nextInt(4), 170L + random.nextInt(100));
+            } else if (pick < 92 && sink.forwardSafe()) {
+                // Only short forward nudges. Never a long continuous drive.
+                sink.autoPulse(+1, 0, 9 + random.nextInt(3), 150L + random.nextInt(85));
             } else {
-                // Tiny playful back-up, useful for breaking repetitive paths.
-                sink.autoPulse(-1, 0, 9, 150L);
+                // No automatic reverse: the front camera cannot see the rear edge.
+                sink.autoStop();
             }
             sink.showTemporaryEmotion(Emotion.CURIOUS, 650L);
-            scheduleNextRoam(1500L);
+            scheduleNextRoam(2000L);
         }
     }
 
     private void scheduleNextRoam(long minimumDelayMs) {
-        long extra = 900L + random.nextInt(2200);
+        long extra = 1100L + random.nextInt(2600);
         nextRoamMs = System.currentTimeMillis() + minimumDelayMs + extra;
     }
 }

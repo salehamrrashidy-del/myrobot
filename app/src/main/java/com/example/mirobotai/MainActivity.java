@@ -32,6 +32,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.json.JSONObject;
+
 public class MainActivity extends ComponentActivity implements
         MiRobotBleManager.Listener,
         FaceVisionController.Listener,
@@ -65,6 +67,7 @@ public class MainActivity extends ComponentActivity implements
     private CheckBox visionToggle;
     private CheckBox companionToggle;
     private CheckBox roamToggle;
+    private CheckBox edgeGuardToggle;
     private TextView aiStatusText;
     private EditText apiKeyInput;
     private EditText modelInput;
@@ -76,6 +79,8 @@ public class MainActivity extends ComponentActivity implements
     private ApiKeyStore apiKeyStore;
     private SharedPreferences aiPrefs;
     private long lastFocusAiPromptMs = 0L;
+    private volatile boolean cliffDanger = false;
+    private volatile float cliffConfidence = 0f;
     private SeekBar speedBar;
     private ArrayAdapter<String> listAdapter;
     private final List<BluetoothDevice> devices = new ArrayList<>();
@@ -100,6 +105,7 @@ public class MainActivity extends ComponentActivity implements
         visionToggle = findViewById(R.id.visionToggle);
         companionToggle = findViewById(R.id.companionToggle);
         roamToggle = findViewById(R.id.roamToggle);
+        edgeGuardToggle = findViewById(R.id.edgeGuardToggle);
         aiStatusText = findViewById(R.id.aiStatusText);
         apiKeyInput = findViewById(R.id.apiKeyInput);
         modelInput = findViewById(R.id.modelInput);
@@ -158,7 +164,24 @@ public class MainActivity extends ComponentActivity implements
             }
         });
         companionToggle.setOnCheckedChangeListener((button, checked) -> companion.setCompanionMode(checked));
-        roamToggle.setOnCheckedChangeListener((button, checked) -> companion.setRoamMode(checked));
+        edgeGuardToggle.setOnCheckedChangeListener((button, checked) -> {
+            if (!checked) {
+                cliffDanger = false;
+                companion.setCliffRisk(false);
+            }
+            visionStatusText.setText(checked
+                    ? "Vision ready 👀 • Edge Guard ON (experimental)"
+                    : "Vision ready 👀 • Edge Guard OFF");
+        });
+        roamToggle.setOnCheckedChangeListener((button, checked) -> {
+            if (checked) {
+                // Roaming is only allowed with vision + the local edge guard enabled.
+                if (!visionToggle.isChecked()) visionToggle.setChecked(true);
+                if (!edgeGuardToggle.isChecked()) edgeGuardToggle.setChecked(true);
+                startVisionIfAllowed();
+            }
+            companion.setRoamMode(checked);
+        });
 
         findViewById(R.id.happyButton).setOnClickListener(v -> temporaryEmotion(Emotion.HAPPY, 2500));
         findViewById(R.id.upsetButton).setOnClickListener(v -> temporaryEmotion(Emotion.UPSET, 2500));
@@ -318,6 +341,11 @@ public class MainActivity extends ComponentActivity implements
             Toast.makeText(this, "Connect robot first", Toast.LENGTH_SHORT).show();
             return;
         }
+        if (forward > 0 && !forwardSafe()) {
+            stopRobotInternal();
+            Toast.makeText(this, "Edge Guard: forward blocked ⚠️", Toast.LENGTH_SHORT).show();
+            return;
+        }
         int delta = Math.max(8, speedBar.getProgress());
         sendMove(forward, turn, delta);
     }
@@ -377,6 +405,29 @@ public class MainActivity extends ComponentActivity implements
         });
     }
 
+    @Override public void onCliffRisk(float confidence) {
+        runOnUiThread(() -> {
+            if (edgeGuardToggle == null || !edgeGuardToggle.isChecked()) return;
+            cliffDanger = true;
+            cliffConfidence = confidence;
+            stopRobotInternal();
+            companion.setCliffRisk(true);
+            int pct = Math.round(Math.max(0f, Math.min(1f, confidence)) * 100f);
+            visionStatusText.setText("EDGE AHEAD ⚠️ — forward blocked (" + pct + "%)");
+        });
+    }
+
+    @Override public void onCliffClear() {
+        runOnUiThread(() -> {
+            cliffDanger = false;
+            cliffConfidence = 0f;
+            companion.setCliffRisk(false);
+            if (edgeGuardToggle != null && edgeGuardToggle.isChecked()) {
+                visionStatusText.setText("Vision ready 👀 • Edge Guard ON (experimental)");
+            }
+        });
+    }
+
     @Override public void onVisionStatus(String message) {
         runOnUiThread(() -> visionStatusText.setText(message));
     }
@@ -386,9 +437,18 @@ public class MainActivity extends ComponentActivity implements
         return ble != null && ble.isReady();
     }
 
+    @Override public boolean forwardSafe() {
+        return edgeGuardToggle == null || !edgeGuardToggle.isChecked() || !cliffDanger;
+    }
+
     @Override public void autoPulse(int forward, int turn, int delta, long durationMs) {
         runOnUiThread(() -> {
             if (!robotReady()) return;
+            if (forward > 0 && !forwardSafe()) {
+                stopRobotInternal();
+                companion.setCliffRisk(true);
+                return;
+            }
             handler.removeCallbacks(autoStopRunnable);
             sendMove(forward, turn, Math.max(6, Math.min(28, delta)));
             handler.postDelayed(autoStopRunnable, Math.max(70L, Math.min(450L, durationMs)));
@@ -605,9 +665,8 @@ public class MainActivity extends ComponentActivity implements
                 "Use light emotion naturally, without theatrical laughs, dramatic sighs, or overacting. " +
                 "Never guilt the user for leaving you alone and never act emotionally dependent. " +
                 "You are physically a small wheeled robot in the room. Do not claim you moved unless the app actually moved you. " +
-                "You have live tools. For the current time, date or day, always call get_current_datetime and use its result. " +
-                "For current weather, news, prices, sports, recent facts, or anything that may have changed, use Google Search instead of guessing. " +
-                "For stable general knowledge, answer normally. Never claim you cannot check current information when these tools are available. " +
+                "You have robot action tools. When the user asks you to turn, stop, roam, face them, or make a small safe movement, use the appropriate tool instead of only talking about it. " +
+                "Never invent raw motor values or long drives. Local Edge Guard safety is absolute: if a movement tool is refused, accept that and do not retry aggressively. " +
                 "Current hidden personality meters (do not read these numbers aloud): happiness=" + happy +
                 ", curiosity=" + curious + ", boredom=" + bored + ". " +
                 "Let these meters gently influence your tone. If curiosity is high, ask a small question. " +
@@ -671,6 +730,97 @@ public class MainActivity extends ComponentActivity implements
             if (transcript != null && !transcript.trim().isEmpty()) {
                 aiStatusText.setText("AI: " + transcript.trim());
             }
+        });
+    }
+
+    @Override public void onRobotToolCall(String id, String name, JSONObject args) {
+        final String toolName = name == null ? "" : name;
+        final JSONObject toolArgs = args == null ? new JSONObject() : args;
+        runOnUiThread(() -> {
+            boolean ok = false;
+            String result = "unknown robot action";
+            try {
+                switch (toolName) {
+                    case "robot_stop":
+                        companion.pauseFor(1200L);
+                        stopRobot();
+                        ok = true;
+                        result = "robot stopped";
+                        break;
+
+                    case "robot_turn": {
+                        if (!robotReady()) { result = "robot is not connected"; break; }
+                        String dir = toolArgs.optString("direction", "");
+                        int turn = "left".equalsIgnoreCase(dir) ? -1 : ("right".equalsIgnoreCase(dir) ? +1 : 0);
+                        if (turn == 0) { result = "direction must be left or right"; break; }
+                        companion.pauseFor(700L);
+                        autoPulse(0, turn, 11, 190L);
+                        ok = true;
+                        result = "turned " + dir + " a little";
+                        break;
+                    }
+
+                    case "robot_nudge": {
+                        if (!robotReady()) { result = "robot is not connected"; break; }
+                        if (!forwardSafe()) {
+                            stopRobotInternal();
+                            result = "blocked by Edge Guard: possible table edge ahead";
+                            break;
+                        }
+                        companion.pauseFor(900L);
+                        autoPulse(+1, 0, 9, 150L);
+                        ok = true;
+                        result = "small forward nudge completed";
+                        break;
+                    }
+
+                    case "set_roam_mode": {
+                        boolean enabled = toolArgs.optBoolean("enabled", false);
+                        if (enabled) {
+                            if (!visionToggle.isChecked()) visionToggle.setChecked(true);
+                            if (!edgeGuardToggle.isChecked()) edgeGuardToggle.setChecked(true);
+                            startVisionIfAllowed();
+                        }
+                        roamToggle.setChecked(enabled);
+                        ok = true;
+                        result = enabled ? "roam mode enabled with Edge Guard" : "roam mode disabled";
+                        break;
+                    }
+
+                    case "set_companion_mode": {
+                        boolean enabled = toolArgs.optBoolean("enabled", false);
+                        companionToggle.setChecked(enabled);
+                        ok = true;
+                        result = enabled ? "companion mode enabled" : "companion mode disabled";
+                        break;
+                    }
+
+                    case "set_expression": {
+                        String exp = toolArgs.optString("expression", "normal");
+                        Emotion emotion;
+                        switch (exp.toLowerCase()) {
+                            case "happy": emotion = Emotion.HAPPY; break;
+                            case "curious": emotion = Emotion.CURIOUS; break;
+                            case "surprised": emotion = Emotion.SURPRISED; break;
+                            case "sleepy": emotion = Emotion.SLEEPY; break;
+                            case "upset": emotion = Emotion.UPSET; break;
+                            default: emotion = moodEngine.currentEmotion(); break;
+                        }
+                        temporaryEmotion(emotion, 1800L);
+                        ok = true;
+                        result = "expression changed to " + exp;
+                        break;
+                    }
+
+                    default:
+                        result = "unsupported robot action: " + toolName;
+                        break;
+                }
+            } catch (Exception e) {
+                ok = false;
+                result = "robot action failed";
+            }
+            if (ai != null) ai.sendRobotToolResult(id, toolName, ok, result);
         });
     }
 

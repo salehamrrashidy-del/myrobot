@@ -21,9 +21,6 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicLong;
 import java.io.IOException;
-import java.time.ZonedDateTime;
-import java.time.format.DateTimeFormatter;
-import java.util.Locale;
 
 import okhttp3.Call;
 import okhttp3.Callback;
@@ -76,6 +73,8 @@ public class RealtimeVoiceController {
         void onAssistantAudioStarted();
         void onAssistantAudioDone();
         void onAssistantTranscript(String transcript);
+        /** Gemini Live function call that should be executed by the robot layer. */
+        void onRobotToolCall(String id, String name, JSONObject args);
     }
 
     private static final int OPENAI_RATE = 24_000;
@@ -488,28 +487,6 @@ public class RealtimeVoiceController {
 
             setup.put("generationConfig", generationConfig);
 
-            // Give Gemini Live access to current information. Google Search is
-            // executed server-side by Gemini. The local clock function is
-            // executed by this Android app so time/date always come from the phone.
-            JSONArray tools = new JSONArray();
-
-            JSONObject searchTool = new JSONObject();
-            searchTool.put("googleSearch", new JSONObject());
-            tools.put(searchTool);
-
-            JSONObject currentTimeFn = new JSONObject();
-            currentTimeFn.put("name", "get_current_datetime");
-            currentTimeFn.put("description",
-                    "Returns the phone's current local date, time, day of week, timezone and UTC offset. " +
-                    "Use this whenever the user asks what time/date/day it is.");
-            JSONArray functionDeclarations = new JSONArray();
-            functionDeclarations.put(currentTimeFn);
-            JSONObject localFunctionTool = new JSONObject();
-            localFunctionTool.put("functionDeclarations", functionDeclarations);
-            tools.put(localFunctionTool);
-
-            setup.put("tools", tools);
-
             // The phone's speaker is close to its microphone. Gemini Live's default
             // behavior is to interrupt the current reply whenever it detects new
             // audio activity. That made the robot hear its own voice and cut itself
@@ -527,6 +504,55 @@ public class RealtimeVoiceController {
             realtimeInputConfig.put("activityHandling", "NO_INTERRUPTION");
             setup.put("realtimeInputConfig", realtimeInputConfig);
 
+            // Give Gemini a small, bounded set of real robot actions. Safety is
+            // still enforced locally by MainActivity/CompanionController, so the
+            // model cannot bypass edge protection or send raw motor values.
+            JSONArray declarations = new JSONArray();
+            declarations.put(functionDecl(
+                    "robot_stop",
+                    "Immediately stop the physical robot.",
+                    new JSONObject()));
+
+            JSONObject turnProps = new JSONObject();
+            turnProps.put("direction", enumStringSchema("left", "right"));
+            declarations.put(functionDecl(
+                    "robot_turn",
+                    "Turn the physical robot a small amount left or right. Use only when the user asks or it is clearly useful.",
+                    objectSchema(turnProps, "direction")));
+
+            JSONObject nudgeProps = new JSONObject();
+            nudgeProps.put("direction", enumStringSchema("forward"));
+            declarations.put(functionDecl(
+                    "robot_nudge",
+                    "Move the robot forward only a very short safe nudge. The app may refuse if the camera edge guard sees danger.",
+                    objectSchema(nudgeProps, "direction")));
+
+            JSONObject enabledProps = new JSONObject();
+            JSONObject boolSchema = new JSONObject();
+            boolSchema.put("type", "BOOLEAN");
+            enabledProps.put("enabled", boolSchema);
+            declarations.put(functionDecl(
+                    "set_roam_mode",
+                    "Turn gentle autonomous roaming on or off.",
+                    objectSchema(enabledProps, "enabled")));
+            declarations.put(functionDecl(
+                    "set_companion_mode",
+                    "Turn person-facing companion mode on or off.",
+                    objectSchema(enabledProps, "enabled")));
+
+            JSONObject expressionProps = new JSONObject();
+            expressionProps.put("expression", enumStringSchema("happy", "curious", "surprised", "sleepy", "upset", "normal"));
+            declarations.put(functionDecl(
+                    "set_expression",
+                    "Change the robot eye expression briefly.",
+                    objectSchema(expressionProps, "expression")));
+
+            JSONObject tool = new JSONObject();
+            tool.put("functionDeclarations", declarations);
+            JSONArray tools = new JSONArray();
+            tools.put(tool);
+            setup.put("tools", tools);
+
             JSONObject systemInstruction = new JSONObject();
             JSONArray parts = new JSONArray();
             JSONObject part = new JSONObject();
@@ -543,6 +569,61 @@ public class RealtimeVoiceController {
                     : "Gemini setup could not be sent ❌");
         } catch (JSONException e) {
             status("Gemini setup error: " + e.getMessage());
+        }
+    }
+
+    private static JSONObject functionDecl(String name, String description, JSONObject parameters) throws JSONException {
+        JSONObject d = new JSONObject();
+        d.put("name", name);
+        d.put("description", description);
+        d.put("behavior", "BLOCKING");
+        if (parameters != null && parameters.length() > 0) d.put("parameters", parameters);
+        return d;
+    }
+
+    private static JSONObject enumStringSchema(String... values) throws JSONException {
+        JSONObject schema = new JSONObject();
+        schema.put("type", "STRING");
+        JSONArray enums = new JSONArray();
+        if (values != null) for (String v : values) enums.put(v);
+        schema.put("enum", enums);
+        return schema;
+    }
+
+    private static JSONObject objectSchema(JSONObject properties, String... required) throws JSONException {
+        JSONObject schema = new JSONObject();
+        schema.put("type", "OBJECT");
+        schema.put("properties", properties == null ? new JSONObject() : properties);
+        if (required != null && required.length > 0) {
+            JSONArray req = new JSONArray();
+            for (String r : required) req.put(r);
+            schema.put("required", req);
+        }
+        return schema;
+    }
+
+    /** Send a result for a Gemini Live function call. */
+    public void sendRobotToolResult(String id, String name, boolean ok, String message) {
+        if (provider != Provider.GEMINI || socket == null || !connected) return;
+        try {
+            JSONObject response = new JSONObject();
+            response.put("ok", ok);
+            response.put("result", message == null ? (ok ? "ok" : "failed") : message);
+
+            JSONObject fr = new JSONObject();
+            if (id != null && !id.isEmpty()) fr.put("id", id);
+            fr.put("name", name == null ? "unknown" : name);
+            fr.put("response", response);
+
+            JSONArray responses = new JSONArray();
+            responses.put(fr);
+            JSONObject toolResponse = new JSONObject();
+            toolResponse.put("functionResponses", responses);
+            JSONObject root = new JSONObject();
+            root.put("toolResponse", toolResponse);
+            socket.send(root.toString());
+        } catch (JSONException e) {
+            status("Tool response error");
         }
     }
 
@@ -828,12 +909,22 @@ public class RealtimeVoiceController {
                 status("Gemini error: " + (err == null ? text : err.optString("message", "unknown")));
                 return;
             }
-            if (event.has("toolCall")) {
-                handleGeminiToolCall(event.optJSONObject("toolCall"));
+            JSONObject toolCall = event.optJSONObject("toolCall");
+            if (toolCall != null) {
+                JSONArray calls = toolCall.optJSONArray("functionCalls");
+                if (calls != null && listener != null) {
+                    for (int i = 0; i < calls.length(); i++) {
+                        JSONObject fc = calls.optJSONObject(i);
+                        if (fc == null) continue;
+                        String id = fc.optString("id", "");
+                        String name = fc.optString("name", "");
+                        JSONObject args = fc.optJSONObject("args");
+                        listener.onRobotToolCall(id, name, args == null ? new JSONObject() : args);
+                    }
+                }
                 return;
             }
-            // Search grounding is server-side, so it normally arrives as regular
-            // serverContent/audio. Local functions arrive as toolCall messages.
+
             JSONObject server = event.optJSONObject("serverContent");
             if (server == null) {
                 if (!sessionReady) {
@@ -889,57 +980,6 @@ public class RealtimeVoiceController {
             status("Gemini event parse error: " + (e.getMessage() == null ? "unknown" : e.getMessage())
                     + (preview.isEmpty() ? "" : " — " + preview));
         }
-    }
-
-    private void handleGeminiToolCall(JSONObject toolCall) {
-        if (toolCall == null || socket == null) return;
-        JSONArray calls = toolCall.optJSONArray("functionCalls");
-        if (calls == null || calls.length() == 0) return;
-
-        try {
-            JSONArray responses = new JSONArray();
-            for (int i = 0; i < calls.length(); i++) {
-                JSONObject fc = calls.optJSONObject(i);
-                if (fc == null) continue;
-                String id = fc.optString("id", "");
-                String name = fc.optString("name", "");
-
-                JSONObject payload = new JSONObject();
-                if ("get_current_datetime".equals(name)) {
-                    payload.put("result", currentDateTimeResult());
-                    status("Clock checked on phone ✅");
-                } else {
-                    payload.put("error", "Unknown local tool: " + name);
-                }
-
-                JSONObject response = new JSONObject();
-                if (!id.isEmpty()) response.put("id", id);
-                response.put("name", name);
-                response.put("response", payload);
-                responses.put(response);
-            }
-
-            JSONObject toolResponse = new JSONObject();
-            toolResponse.put("functionResponses", responses);
-            JSONObject root = new JSONObject();
-            root.put("toolResponse", toolResponse);
-            socket.send(root.toString());
-        } catch (JSONException e) {
-            status("Gemini tool response error: " + e.getMessage());
-        }
-    }
-
-    private JSONObject currentDateTimeResult() throws JSONException {
-        ZonedDateTime now = ZonedDateTime.now();
-        JSONObject result = new JSONObject();
-        result.put("local_date", now.format(DateTimeFormatter.ofPattern("yyyy-MM-dd")));
-        result.put("local_time", now.format(DateTimeFormatter.ofPattern("HH:mm:ss")));
-        result.put("day_of_week", now.getDayOfWeek().toString());
-        result.put("timezone", now.getZone().getId());
-        result.put("utc_offset", now.getOffset().getId());
-        result.put("locale", Locale.getDefault().toLanguageTag());
-        result.put("unix_time_ms", System.currentTimeMillis());
-        return result;
     }
 
     private void finishAssistantAudio() {

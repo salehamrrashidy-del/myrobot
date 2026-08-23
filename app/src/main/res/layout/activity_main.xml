@@ -62,7 +62,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
                 android:layout_marginBottom="4dp"
-                android:text="v1.0.0 — LIVE INFO + TOOLS"
+                android:text="v1.0.0 — EDGE GUARD + AI ROBOT TOOLS"
                 android:textColor="#FFFFD54F"
                 android:textSize="12sp"
                 android:textStyle="bold" />
@@ -198,6 +198,14 @@
                 android:textColor="#FFFFFFFF" />
 
             <CheckBox
+                android:id="@+id/edgeGuardToggle"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:checked="true"
+                android:text="Edge Guard — camera table-edge protection (experimental)"
+                android:textColor="#FFFFFFFF" />
+
+            <CheckBox
                 android:id="@+id/companionToggle"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -214,7 +222,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Roam now moves every few seconds with short safe pulses. Use only in a clear open area."
+                android:text="Roam uses short slow pulses and blocks forward motion when Edge Guard sees a likely drop. Camera Edge Guard is experimental: test on the floor first and do not trust it as a real cliff sensor."
                 android:textColor="#99FFFFFF"
                 android:textSize="11sp" />
 
