@@ -17,6 +17,9 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.atomic.AtomicLong;
 import java.io.IOException;
 
 import okhttp3.Call;
@@ -88,6 +91,12 @@ public class RealtimeVoiceController {
     private AudioTrack audioTrack;
     private Thread recordThread;
     private final Object audioLock = new Object();
+    private final BlockingQueue<byte[]> playbackQueue = new LinkedBlockingQueue<>();
+    private final AtomicLong queuedPlaybackBytes = new AtomicLong(0L);
+    private volatile boolean playbackWorkerRunning = false;
+    private Thread playbackThread;
+    private volatile long suppressMicUntilMs = 0L;
+    private volatile boolean geminiInputPausedForAssistant = false;
     private final StringBuilder transcript = new StringBuilder();
     private volatile boolean assistantSpeaking = false;
     private Provider provider = Provider.GEMINI;
@@ -462,6 +471,23 @@ public class RealtimeVoiceController {
             generationConfig.put("responseModalities", modalities);
             setup.put("generationConfig", generationConfig);
 
+            // The phone's speaker is close to its microphone. Gemini Live's default
+            // behavior is to interrupt the current reply whenever it detects new
+            // audio activity. That made the robot hear its own voice and cut itself
+            // off. Keep automatic VAD, but do not allow activity to interrupt a
+            // response. We also locally pause mic upload while the robot is speaking.
+            JSONObject automaticActivityDetection = new JSONObject();
+            automaticActivityDetection.put("disabled", false);
+            automaticActivityDetection.put("startOfSpeechSensitivity", "START_SENSITIVITY_LOW");
+            automaticActivityDetection.put("endOfSpeechSensitivity", "END_SENSITIVITY_LOW");
+            automaticActivityDetection.put("prefixPaddingMs", 80);
+            automaticActivityDetection.put("silenceDurationMs", 450);
+
+            JSONObject realtimeInputConfig = new JSONObject();
+            realtimeInputConfig.put("automaticActivityDetection", automaticActivityDetection);
+            realtimeInputConfig.put("activityHandling", "NO_INTERRUPTION");
+            setup.put("realtimeInputConfig", realtimeInputConfig);
+
             JSONObject systemInstruction = new JSONObject();
             JSONArray parts = new JSONArray();
             JSONObject part = new JSONObject();
@@ -514,7 +540,18 @@ public class RealtimeVoiceController {
                     try { read = audioRecord.read(buffer, 0, buffer.length); }
                     catch (Exception e) { break; }
                     if (read > 0 && socket != null) {
-                        if (provider == Provider.GEMINI) updateLocalVad(buffer, read);
+                        long nowMs = System.currentTimeMillis();
+                        boolean suppressForSpeaker = provider == Provider.GEMINI
+                                && (assistantSpeaking || nowMs < suppressMicUntilMs);
+                        if (suppressForSpeaker) {
+                            // Keep reading from AudioRecord so its buffer stays healthy,
+                            // but do not upload the robot's own speaker audio to Gemini.
+                            continue;
+                        }
+                        if (provider == Provider.GEMINI) {
+                            geminiInputPausedForAssistant = false;
+                            updateLocalVad(buffer, read);
+                        }
                         String b64 = Base64.encodeToString(buffer, 0, read, Base64.NO_WRAP);
                         if (provider == Provider.GEMINI) {
                             try {
@@ -582,7 +619,7 @@ public class RealtimeVoiceController {
             if (audioTrack != null) return;
             int min = AudioTrack.getMinBufferSize(OUTPUT_RATE,
                     AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT);
-            int size = Math.max(min * 4, 9600);
+            int size = Math.max(min * 6, 19200);
             audioTrack = new AudioTrack.Builder()
                     .setAudioAttributes(new AudioAttributes.Builder()
                             .setUsage(AudioAttributes.USAGE_ASSISTANCE_ACCESSIBILITY)
@@ -600,18 +637,61 @@ public class RealtimeVoiceController {
         }
     }
 
-    private void playChunk(byte[] pcm) {
-        if (pcm == null || pcm.length == 0) return;
+    private void ensurePlaybackWorker() {
         synchronized (audioLock) {
-            ensureAudioTrack();
-            if (audioTrack != null) {
-                try { audioTrack.write(pcm, 0, pcm.length, AudioTrack.WRITE_BLOCKING); }
-                catch (Exception ignored) { }
-            }
+            if (playbackWorkerRunning && playbackThread != null) return;
+            playbackWorkerRunning = true;
+            playbackThread = new Thread(() -> {
+                while (playbackWorkerRunning) {
+                    byte[] pcm;
+                    try {
+                        pcm = playbackQueue.take();
+                    } catch (InterruptedException e) {
+                        break;
+                    }
+                    if (pcm == null || pcm.length == 0) continue;
+                    try {
+                        ensureAudioTrack();
+                        AudioTrack track;
+                        synchronized (audioLock) { track = audioTrack; }
+                        if (track != null) {
+                            track.write(pcm, 0, pcm.length, AudioTrack.WRITE_BLOCKING);
+                        }
+                    } catch (Exception ignored) {
+                    } finally {
+                        queuedPlaybackBytes.addAndGet(-pcm.length);
+                    }
+                }
+            }, "MiRobotAI-Playback");
+            playbackThread.start();
         }
     }
 
+    private void playChunk(byte[] pcm) {
+        if (pcm == null || pcm.length == 0) return;
+        if (provider == Provider.GEMINI) pauseGeminiMicForAssistant();
+        ensurePlaybackWorker();
+        byte[] copy = java.util.Arrays.copyOf(pcm, pcm.length);
+        queuedPlaybackBytes.addAndGet(copy.length);
+        playbackQueue.offer(copy);
+    }
+
+    private void pauseGeminiMicForAssistant() {
+        suppressMicUntilMs = Math.max(suppressMicUntilMs, System.currentTimeMillis() + 750L);
+        if (provider != Provider.GEMINI || geminiInputPausedForAssistant || socket == null) return;
+        geminiInputPausedForAssistant = true;
+        try {
+            JSONObject realtimeInput = new JSONObject();
+            realtimeInput.put("audioStreamEnd", true);
+            JSONObject event = new JSONObject();
+            event.put("realtimeInput", realtimeInput);
+            socket.send(event.toString());
+        } catch (JSONException ignored) { }
+    }
+
     private void flushPlayback() {
+        playbackQueue.clear();
+        queuedPlaybackBytes.set(0L);
         synchronized (audioLock) {
             if (audioTrack != null) {
                 try { audioTrack.pause(); audioTrack.flush(); audioTrack.play(); }
@@ -621,6 +701,12 @@ public class RealtimeVoiceController {
     }
 
     private void stopPlayback() {
+        playbackWorkerRunning = false;
+        Thread worker = playbackThread;
+        playbackThread = null;
+        if (worker != null) worker.interrupt();
+        playbackQueue.clear();
+        queuedPlaybackBytes.set(0L);
         synchronized (audioLock) {
             if (audioTrack != null) {
                 try { audioTrack.stop(); } catch (Exception ignored) { }
@@ -762,6 +848,14 @@ public class RealtimeVoiceController {
 
     private void finishAssistantAudio() {
         if (assistantSpeaking && listener != null) listener.onAssistantAudioDone();
+        if (provider == Provider.GEMINI) {
+            long queued = Math.max(0L, queuedPlaybackBytes.get());
+            long queuedMs = (queued * 1000L) / (OUTPUT_RATE * 2L); // mono PCM16
+            // Keep the mic upload muted until queued speaker audio has played, plus
+            // a short tail so the phone does not feed its own echo back as a new turn.
+            suppressMicUntilMs = Math.max(suppressMicUntilMs,
+                    System.currentTimeMillis() + Math.max(900L, queuedMs + 900L));
+        }
         assistantSpeaking = false;
         transcript.setLength(0);
     }

@@ -1,4 +1,4 @@
-# MiRobotAI v0.9.7
+# MiRobotAI v0.9.8
 
 AI connection repair build.
 
@@ -21,3 +21,11 @@ Changes:
 - Microphone starts only after `setupComplete`.
 
 Use Gemini Live, keep the default model, save one Gemini API key, then tap Connect AI.
+
+
+## v0.9.8 voice playback fix
+- Prevents Gemini from interrupting its own reply (`NO_INTERRUPTION`).
+- Stops uploading microphone audio while the robot speaker is talking, avoiding self-echo loops.
+- Adds a short echo tail before microphone upload resumes.
+- Moves PCM playback to a dedicated queue/thread so WebSocket receive callbacks are not blocked by `AudioTrack.write()`.
+- Uses a larger streaming playback buffer to reduce gaps between audio chunks.
