@@ -1,8 +1,12 @@
-# Mi Robot AI v0.8 — Realtime Voice + Roam Fix
+# MiRobotAI v0.8.1
+
+This build moves the **AI voice & personality** controls to the very TOP of the hidden panel so they cannot be missed. The panel also shows **v0.8.1 — AI BUILD** in yellow.
+
+# Mi Robot AI v0.8.1 — Realtime Voice + Roam Fix
 
 This is the first AI-speaking build.
 
-## New in v0.8
+## New in v0.8.1
 
 - Realtime speech-to-speech AI (no Android TTS)
 - Egyptian Arabic personality prompt
@@ -36,4 +40,4 @@ The robot still has no real obstacle-distance sensor. Use Roam only on a clear f
 
 ## Build
 
-Upload the contents of this folder to the existing GitHub repository. GitHub Actions will build `MiRobotAI-v0.8-debug-apk`.
+Upload the contents of this folder to the existing GitHub repository. GitHub Actions will build `MiRobotAI-v0.8.1-debug-apk`.
