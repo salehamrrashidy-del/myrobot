@@ -6,12 +6,30 @@ android {
     namespace 'com.example.mirobotai'
     compileSdk 35
 
+    signingConfigs {
+        debug {
+            // Development-only signing key bundled so every GitHub build has
+            // the same signature. This lets Android install future APKs as
+            // updates instead of forcing an uninstall that wipes saved keys.
+            storeFile file('keys/mirobot-dev.jks')
+            storePassword 'mirobotdev'
+            keyAlias 'mirobotdev'
+            keyPassword 'mirobotdev'
+        }
+    }
+
     defaultConfig {
         applicationId "com.example.mirobotai"
         minSdk 26
         targetSdk 35
-        versionCode 17
-        versionName "0.9.5.1"
+        versionCode 21
+        versionName "0.9.9"
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
     }
 }
 

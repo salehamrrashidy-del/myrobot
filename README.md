@@ -1,31 +1,33 @@
-# MiRobotAI v0.9.8
+# MiRobotAI v0.9.9 — saved API key + softer voice
 
-AI connection repair build.
+This build focuses on daily-use comfort.
 
-- Gemini Live setup now uses the canonical `setup.generationConfig.responseModalities` wire format used by Google's current GenAI SDK.
-- Rejects non-Live Gemini models before opening the voice socket.
-- Migrates an accidentally saved normal Gemini model back to `gemini-3.1-flash-live-preview`.
-- Shows whether the setup frame was actually sent and gives better parse/close diagnostics.
-- Gemini endpoint remains automatic; do not fill the Text/Endpoint field when Gemini is selected.
+## API key persistence
+- API keys are encrypted with Android Keystore and saved per provider on the phone.
+- After you paste a key once, tap **SAVE / CHANGE KEY**. On later app launches, leave the API key box empty and just tap **Connect AI**.
+- The provider, model, endpoint, and Gemini voice choice are saved too.
+- A fixed **development-only signing key** is included for this personal side-loaded project so future GitHub APKs from this project can install as updates and keep app data.
+- Important: Android still deletes app data if you manually uninstall the app or clear its storage. Do not uninstall between normal updates once v0.9.9 is installed.
 
-# MiRobotAI v0.9.6 — Gemini Live setup fix
+## Softer voice
+Gemini Live now has a saved voice selector with these curated options:
+- **Achird — Friendly** (default)
+- Vindemiatrix — Gentle
+- Sulafat — Warm
+- Achernar — Soft
+- Leda — Youthful
+- Puck — Upbeat
 
-This build focuses on the Gemini Live connection handshake.
+The robot personality prompt was also softened: natural medium pace, no breathy whisper, no exaggerated high pitch, and less theatrical emotion.
 
-Changes:
-- Uses `gemini-3.1-flash-live-preview` by default.
-- Sends the initial Gemini WebSocket setup in the same shape as Google's current raw WebSocket quickstart (`responseModalities` directly in `setup`).
-- Waits up to 30 seconds for `setupComplete` instead of 10 seconds.
-- Handles both text and binary WebSocket messages.
-- Shows the first unexpected Gemini setup message type instead of silently waiting.
-- Microphone starts only after `setupComplete`.
+## Gemini audio stability retained from v0.9.8
+- Uses `gemini-3.1-flash-live-preview`.
+- Waits for `setupComplete` before starting microphone upload.
+- Uses `NO_INTERRUPTION` and pauses mic upload while the robot speaks to reduce self-echo interruptions.
+- Uses queued PCM playback to reduce gaps between audio chunks.
 
-Use Gemini Live, keep the default model, save one Gemini API key, then tap Connect AI.
+## Build
+Upload this folder to the same GitHub repository and run the existing **Build Android APK** action.
+The artifact name is `MiRobotAI-v0.9.9-debug-apk`.
 
-
-## v0.9.8 voice playback fix
-- Prevents Gemini from interrupting its own reply (`NO_INTERRUPTION`).
-- Stops uploading microphone audio while the robot speaker is talking, avoiding self-echo loops.
-- Adds a short echo tail before microphone upload resumes.
-- Moves PCM playback to a dedicated queue/thread so WebSocket receive callbacks are not blocked by `AudioTrack.write()`.
-- Uses a larger streaming playback buffer to reduce gaps between audio chunks.
+> The bundled signing key is for this personal development build only. Replace it before publishing a production app.

@@ -40,6 +40,18 @@ public class MainActivity extends ComponentActivity implements
 
     private static final int REQ_PERMISSIONS = 42;
 
+    private static final String[] GEMINI_VOICE_LABELS = {
+            "Achird — Friendly",
+            "Vindemiatrix — Gentle",
+            "Sulafat — Warm",
+            "Achernar — Soft",
+            "Leda — Youthful",
+            "Puck — Upbeat"
+    };
+    private static final String[] GEMINI_VOICE_NAMES = {
+            "Achird", "Vindemiatrix", "Sulafat", "Achernar", "Leda", "Puck"
+    };
+
     private MiRobotBleManager ble;
     private MoodEngine moodEngine;
     private FaceVisionController vision;
@@ -58,6 +70,7 @@ public class MainActivity extends ComponentActivity implements
     private EditText modelInput;
     private EditText endpointInput;
     private Spinner providerSpinner;
+    private Spinner voiceSpinner;
     private Button aiConnectButton;
     private RealtimeVoiceController ai;
     private ApiKeyStore apiKeyStore;
@@ -92,6 +105,7 @@ public class MainActivity extends ComponentActivity implements
         modelInput = findViewById(R.id.modelInput);
         endpointInput = findViewById(R.id.endpointInput);
         providerSpinner = findViewById(R.id.providerSpinner);
+        voiceSpinner = findViewById(R.id.voiceSpinner);
         aiConnectButton = findViewById(R.id.aiConnectButton);
         speedBar = findViewById(R.id.speedBar);
 
@@ -111,6 +125,7 @@ public class MainActivity extends ComponentActivity implements
         apiKeyStore = new ApiKeyStore(this);
         aiPrefs = getSharedPreferences("mirobot_ai_provider", MODE_PRIVATE);
         ai = new RealtimeVoiceController(this, this);
+        setupVoiceUi();
         setupProviderUi();
 
         faceView.setOnClickListener(v -> {
@@ -168,7 +183,7 @@ public class MainActivity extends ComponentActivity implements
                 if (!value.isEmpty()) apiKeyStore.save(provider.slot, value);
                 saveProviderSettings(provider);
                 apiKeyInput.setText("");
-                aiStatusText.setText(provider.label + " saved securely");
+                aiStatusText.setText(provider.label + " key saved securely — you do not need to paste it again");
             } catch (Exception e) {
                 aiStatusText.setText("Could not save provider settings");
             }
@@ -223,7 +238,7 @@ public class MainActivity extends ComponentActivity implements
                 return;
             }
             ai.connect(provider, key, endpointInput.getText().toString().trim(),
-                    modelInput.getText().toString().trim(), buildAiPersona());
+                    modelInput.getText().toString().trim(), selectedVoiceName(), buildAiPersona());
         });
 
         findViewById(R.id.aiHelloButton).setOnClickListener(v -> {
@@ -478,6 +493,37 @@ public class MainActivity extends ComponentActivity implements
         if (hasFocus) immersive();
     }
 
+    private void setupVoiceUi() {
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(
+                this, android.R.layout.simple_spinner_item, GEMINI_VOICE_LABELS);
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        voiceSpinner.setAdapter(adapter);
+
+        String savedVoice = aiPrefs.getString("gemini_voice", "Achird");
+        int index = 0;
+        for (int i = 0; i < GEMINI_VOICE_NAMES.length; i++) {
+            if (GEMINI_VOICE_NAMES[i].equalsIgnoreCase(savedVoice)) {
+                index = i;
+                break;
+            }
+        }
+        voiceSpinner.setSelection(index);
+        voiceSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                if (position >= 0 && position < GEMINI_VOICE_NAMES.length) {
+                    aiPrefs.edit().putString("gemini_voice", GEMINI_VOICE_NAMES[position]).apply();
+                }
+            }
+            @Override public void onNothingSelected(AdapterView<?> parent) { }
+        });
+    }
+
+    private String selectedVoiceName() {
+        int position = voiceSpinner == null ? 0 : voiceSpinner.getSelectedItemPosition();
+        if (position < 0 || position >= GEMINI_VOICE_NAMES.length) position = 0;
+        return GEMINI_VOICE_NAMES[position];
+    }
+
     private void setupProviderUi() {
         RealtimeVoiceController.Provider[] providers = RealtimeVoiceController.Provider.values();
         ArrayAdapter<RealtimeVoiceController.Provider> adapter = new ArrayAdapter<>(
@@ -526,7 +572,16 @@ public class MainActivity extends ComponentActivity implements
                     : "Required: OpenAI-compatible Realtime WebSocket URL");
         }
         boolean saved = apiKeyStore.hasKey(provider.slot);
-        aiStatusText.setText(provider.label + (saved ? " — key saved" : " — paste a key"));
+        apiKeyInput.setText("");
+        apiKeyInput.setHint(saved
+                ? "API key saved securely — leave blank to keep it"
+                : "Paste API key for selected provider");
+        if (voiceSpinner != null) {
+            voiceSpinner.setEnabled(provider == RealtimeVoiceController.Provider.GEMINI);
+        }
+        aiStatusText.setText(provider.label + (saved
+                ? " — key saved securely; just tap Connect AI"
+                : " — paste a key once, then save it"));
     }
 
     private void saveProviderSettings(RealtimeVoiceController.Provider provider) {
@@ -534,6 +589,7 @@ public class MainActivity extends ComponentActivity implements
                 .putInt("selected_provider", provider.ordinal())
                 .putString(provider.slot + "_model", modelInput.getText().toString().trim())
                 .putString(provider.slot + "_endpoint", endpointInput.getText().toString().trim())
+                .putString("gemini_voice", selectedVoiceName())
                 .apply();
     }
 
@@ -543,9 +599,10 @@ public class MainActivity extends ComponentActivity implements
         int bored = moodEngine == null ? 10 : moodEngine.getBoredom();
         return "You are a tiny home companion robot with a cute, warm, playful personality. " +
                 "Speak naturally in Egyptian Arabic (Masri) unless the user asks for another language. " +
-                "Your voice should feel youthful, soft, friendly and animated, never like a scary adult narrator, " +
-                "but do not imitate a baby. Keep most replies short: usually one or two sentences. " +
-                "Use emotion in your real voice: little laughs, curiosity, excitement, sleepy softness, or a mild playful pout when appropriate. " +
+                "Your voice should feel warm, relaxed, friendly and natural, never like a scary adult narrator. " +
+                "Do not imitate a baby, do not sound breathy or whispery, and do not use an exaggerated high pitch. " +
+                "Speak at a comfortable medium pace with a gentle smile in the voice. Keep most replies short: usually one or two sentences. " +
+                "Use light emotion naturally, without theatrical laughs, dramatic sighs, or overacting. " +
                 "Never guilt the user for leaving you alone and never act emotionally dependent. " +
                 "You are physically a small wheeled robot in the room. Do not claim you moved unless the app actually moved you. " +
                 "Current hidden personality meters (do not read these numbers aloud): happiness=" + happy +

@@ -62,7 +62,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
                 android:layout_marginBottom="4dp"
-                android:text="v0.9.6 — BUILD FIX"
+                android:text="v0.9.9 — SAVED KEY + SOFTER VOICE"
                 android:textColor="#FFFFD54F"
                 android:textSize="12sp"
                 android:textStyle="bold" />
@@ -85,6 +85,21 @@
 
             <Spinner
                 android:id="@+id/providerSpinner"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:spinnerMode="dropdown" />
+
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:text="Voice"
+                android:textColor="#FFFFFFFF"
+                android:textSize="12sp" />
+
+            <Spinner
+                android:id="@+id/voiceSpinner"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:spinnerMode="dropdown" />
@@ -129,7 +144,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:text="Save provider" />
+                    android:text="SAVE / CHANGE KEY" />
 
                 <Button
                     android:id="@+id/aiConnectButton"
@@ -154,7 +169,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Gemini Live and OpenAI Realtime are built in. Custom supports services that speak the OpenAI Realtime WebSocket protocol. Keys are encrypted on this phone."
+                android:text="Your API key is encrypted on this phone and reused automatically. Paste a new key only when you want to change it. Gemini voice choice is saved too."
                 android:textColor="#88FFFFFF"
                 android:textSize="10sp" />
 

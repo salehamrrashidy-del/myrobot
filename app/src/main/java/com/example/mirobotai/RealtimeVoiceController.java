@@ -102,6 +102,7 @@ public class RealtimeVoiceController {
     private Provider provider = Provider.GEMINI;
     private String model = Provider.GEMINI.defaultModel;
     private String customEndpoint = "";
+    private String voiceName = "Achird";
     private String lastInstructions = "";
     private boolean localSpeech = false;
     private long lastLoudMs = 0L;
@@ -133,7 +134,7 @@ public class RealtimeVoiceController {
     public boolean isConnected() { return sessionReady; }
     public Provider getProvider() { return provider; }
 
-    public void connect(Provider provider, String apiKey, String endpoint, String model, String instructions) {
+    public void connect(Provider provider, String apiKey, String endpoint, String model, String voiceName, String instructions) {
         manualDisconnect = true;
         disconnect();
         manualDisconnect = false;
@@ -146,6 +147,7 @@ public class RealtimeVoiceController {
             return;
         }
         this.customEndpoint = endpoint == null ? "" : endpoint.trim();
+        this.voiceName = (voiceName == null || voiceName.trim().isEmpty()) ? "Achird" : voiceName.trim();
         this.lastInstructions = instructions == null ? "" : instructions;
         this.reconnectApiKey = apiKey == null ? "" : apiKey.trim();
 
@@ -469,6 +471,18 @@ public class RealtimeVoiceController {
             modalities.put("AUDIO");
             JSONObject generationConfig = new JSONObject();
             generationConfig.put("responseModalities", modalities);
+
+            // Pick a calmer, friendlier prebuilt voice and persist the user's
+            // selection in MainActivity. Native-audio Live models support these
+            // prebuilt voice names through speechConfig.
+            JSONObject prebuiltVoice = new JSONObject();
+            prebuiltVoice.put("voiceName", voiceName);
+            JSONObject voiceConfig = new JSONObject();
+            voiceConfig.put("prebuiltVoiceConfig", prebuiltVoice);
+            JSONObject speechConfig = new JSONObject();
+            speechConfig.put("voiceConfig", voiceConfig);
+            generationConfig.put("speechConfig", speechConfig);
+
             setup.put("generationConfig", generationConfig);
 
             // The phone's speaker is close to its microphone. Gemini Live's default
