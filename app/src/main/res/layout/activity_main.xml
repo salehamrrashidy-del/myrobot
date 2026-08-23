@@ -13,7 +13,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Mi Robot AI — Motor Test"
+            android:text="Mi Robot AI v0.3 — Connection + Motor Test"
             android:textSize="26sp"
             android:textStyle="bold" />
 
@@ -42,7 +42,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
-            android:text="Hold a direction button to move. Release it to stop. Keep the wheels off the floor for the first test."
+            android:text="Wait until the status says “ROBOT READY ✅”. Then hold a direction button to move. Release it to stop. Keep the wheels off the floor for the first test."
             android:textSize="14sp" />
 
         <Button

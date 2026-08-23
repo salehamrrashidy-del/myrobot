@@ -1,0 +1,1 @@
+Upload/replace these project files in your existing GitHub repo. GitHub Actions will build the new app-debug.apk automatically.

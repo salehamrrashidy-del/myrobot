@@ -108,16 +108,14 @@ public class MainActivity extends Activity implements MiRobotBleManager.Listener
         int left = clamp(MiRobotProtocol.NEUTRAL + leftDelta, 0, 255);
         int right = clamp(MiRobotProtocol.NEUTRAL + rightDelta, 0, 255);
 
-        byte[] packet = MiRobotProtocol.rockerPacket(left, right);
-        ble.write(packet);
-        appendLog("TX " + hex(packet) + "   A=" + left + " B=" + right);
+        ble.move(left, right);
+        appendLog("MOVE A=" + left + " B=" + right);
     }
 
     private void stopRobot() {
         if (!ble.isReady()) return;
-        byte[] p = MiRobotProtocol.stopPacket();
-        ble.write(p);
-        appendLog("TX STOP " + hex(p));
+        ble.stop();
+        appendLog("STOP");
     }
 
     @Override public void onStatus(String status) {
@@ -147,11 +145,15 @@ public class MainActivity extends Activity implements MiRobotBleManager.Listener
     }
 
     @Override public void onReady() {
-        appendLog("Mi Robot BLE service found. Handshake queued.");
+        appendLog("HANDSHAKE OK — robot ready");
     }
 
     @Override public void onData(byte[] data) {
         appendLog("RX " + hex(data));
+    }
+
+    @Override public void onTx(byte[] data) {
+        appendLog("TX " + hex(data));
     }
 
     private void appendLog(String line) {
