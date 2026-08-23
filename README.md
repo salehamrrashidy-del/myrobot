@@ -1,3 +1,7 @@
+Mi Robot AI v0.7.1
+
+Build compatibility fix for the v0.7 companion vision release.
+
 # MiRobotAI v0.7 — Companion Vision
 
 Keeps the working Mi Robot Builder BLE motor control and the LOOI-style face from v0.6.
