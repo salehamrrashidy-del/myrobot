@@ -92,13 +92,13 @@
                 android:id="@+id/roamToggle"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Gentle roam — experimental"
+                android:text="Roam mode — move around"
                 android:textColor="#FFFFFFFF" />
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Roam uses tiny slow pulses. Use only in an open area. Owner recognition is the next vision step."
+                android:text="Roam now moves every few seconds with short safe pulses. Use only in a clear open area."
                 android:textColor="#99FFFFFF"
                 android:textSize="11sp" />
 
@@ -159,6 +159,65 @@
                 <CheckBox android:id="@+id/invertLeft" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:text="Inv L" android:textColor="#FFFFFFFF" />
                 <CheckBox android:id="@+id/invertRight" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:checked="true" android:text="Inv R" android:textColor="#FFFFFFFF" />
             </LinearLayout>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="AI voice &amp; personality"
+                android:textColor="#FFFFFFFF"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/aiStatusText"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="AI OFF — key not connected"
+                android:textColor="#FF9FE7FF"
+                android:textSize="12sp" />
+
+            <EditText
+                android:id="@+id/apiKeyInput"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Paste OpenAI API key once"
+                android:inputType="textPassword"
+                android:maxLines="1"
+                android:textColor="#FFFFFFFF"
+                android:textColorHint="#88FFFFFF" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/saveAiKeyButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Save key" />
+
+                <Button
+                    android:id="@+id/aiConnectButton"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="Connect AI" />
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/aiHelloButton"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Test cute Arabic voice" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Prototype: the key is entered on-device and encrypted with Android Keystore. The normal robot face never shows transcripts."
+                android:textColor="#88FFFFFF"
+                android:textSize="10sp" />
 
             <TextView
                 android:layout_width="match_parent"

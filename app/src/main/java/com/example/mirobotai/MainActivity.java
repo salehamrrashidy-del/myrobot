@@ -17,6 +17,7 @@ import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.ListView;
+import android.widget.EditText;
 import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -31,7 +32,8 @@ import java.util.Map;
 public class MainActivity extends ComponentActivity implements
         MiRobotBleManager.Listener,
         FaceVisionController.Listener,
-        CompanionController.MotionSink {
+        CompanionController.MotionSink,
+        RealtimeVoiceController.Listener {
 
     private static final int REQ_PERMISSIONS = 42;
 
@@ -48,6 +50,12 @@ public class MainActivity extends ComponentActivity implements
     private CheckBox visionToggle;
     private CheckBox companionToggle;
     private CheckBox roamToggle;
+    private TextView aiStatusText;
+    private EditText apiKeyInput;
+    private Button aiConnectButton;
+    private RealtimeVoiceController ai;
+    private ApiKeyStore apiKeyStore;
+    private long lastFocusAiPromptMs = 0L;
     private SeekBar speedBar;
     private ArrayAdapter<String> listAdapter;
     private final List<BluetoothDevice> devices = new ArrayList<>();
@@ -72,6 +80,9 @@ public class MainActivity extends ComponentActivity implements
         visionToggle = findViewById(R.id.visionToggle);
         companionToggle = findViewById(R.id.companionToggle);
         roamToggle = findViewById(R.id.roamToggle);
+        aiStatusText = findViewById(R.id.aiStatusText);
+        apiKeyInput = findViewById(R.id.apiKeyInput);
+        aiConnectButton = findViewById(R.id.aiConnectButton);
         speedBar = findViewById(R.id.speedBar);
 
         ble = new MiRobotBleManager(this, this);
@@ -87,6 +98,9 @@ public class MainActivity extends ComponentActivity implements
         companion.start();
 
         vision = new FaceVisionController(this, this, this);
+        apiKeyStore = new ApiKeyStore(this);
+        ai = new RealtimeVoiceController(this, this);
+        if (apiKeyStore.hasKey()) aiStatusText.setText("AI key saved securely");
 
         faceView.setOnClickListener(v -> {
             moodEngine.interacted();
@@ -131,6 +145,56 @@ public class MainActivity extends ComponentActivity implements
             moodEngine.interacted();
             temporaryEmotion(Emotion.EXCITED, 1200);
         });
+
+        findViewById(R.id.saveAiKeyButton).setOnClickListener(v -> {
+            String value = apiKeyInput.getText().toString().trim();
+            if (value.isEmpty()) {
+                Toast.makeText(this, "Paste your OpenAI API key first", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            try {
+                apiKeyStore.save(value);
+                apiKeyInput.setText("");
+                aiStatusText.setText("AI key saved securely on this phone");
+            } catch (Exception e) {
+                aiStatusText.setText("Could not save key");
+            }
+        });
+
+        aiConnectButton.setOnClickListener(v -> {
+            if (ai.isConnected()) {
+                ai.disconnect();
+                aiConnectButton.setText("Connect AI");
+                return;
+            }
+            String key = apiKeyStore.load();
+            if ((key == null || key.isEmpty()) && !apiKeyInput.getText().toString().trim().isEmpty()) {
+                try {
+                    apiKeyStore.save(apiKeyInput.getText().toString().trim());
+                    apiKeyInput.setText("");
+                    key = apiKeyStore.load();
+                } catch (Exception ignored) { }
+            }
+            if (key == null || key.isEmpty()) {
+                aiStatusText.setText("Paste + save API key first");
+                return;
+            }
+            if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                requestNeededPermissions();
+                aiStatusText.setText("Allow microphone, then tap Connect AI again");
+                return;
+            }
+            ai.connect(key, buildAiPersona());
+        });
+
+        findViewById(R.id.aiHelloButton).setOnClickListener(v -> {
+            if (!ai.isConnected()) {
+                Toast.makeText(this, "Connect AI first", Toast.LENGTH_SHORT).show();
+                return;
+            }
+            ai.speakPrompt("قول جملة ترحيب قصيرة ولطيفة بالمصري كأنك روبوت صغير مبسوط إني جيت. ما تقولش إنك مساعد ذكاء اصطناعي.");
+        });
+
         findViewById(R.id.talkPreviewButton).setOnClickListener(v -> {
             moodEngine.talkedTo();
             faceView.setEmotion(Emotion.TALKING);
@@ -249,6 +313,13 @@ public class MainActivity extends ComponentActivity implements
         runOnUiThread(() -> {
             moodEngine.noticedSomethingInteresting();
             companion.focusLikeBehavior();
+            long now = System.currentTimeMillis();
+            if (ai != null && ai.isConnected() && now - lastFocusAiPromptMs > 20 * 60_000L) {
+                lastFocusAiPromptMs = now;
+                companion.pauseFor(7000L);
+                ai.updatePersona(buildAiPersona());
+                ai.speakPrompt("إنت شايف صاحبك مركز في حاجة بقاله شوية. اسأله بالمصري وبجملة قصيرة لطيفة: بيعمل إيه، وهل ينفع تقعد معاه. خليك فضولي وكيوت ومن غير زن أو إحساس بالذنب.");
+            }
         });
     }
 
@@ -265,7 +336,7 @@ public class MainActivity extends ComponentActivity implements
         runOnUiThread(() -> {
             if (!robotReady()) return;
             handler.removeCallbacks(autoStopRunnable);
-            sendMove(forward, turn, Math.max(6, Math.min(14, delta)));
+            sendMove(forward, turn, Math.max(6, Math.min(28, delta)));
             handler.postDelayed(autoStopRunnable, Math.max(70L, Math.min(450L, durationMs)));
         });
     }
@@ -325,6 +396,9 @@ public class MainActivity extends ComponentActivity implements
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             need.add(Manifest.permission.CAMERA);
         }
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            need.add(Manifest.permission.RECORD_AUDIO);
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             if (checkSelfPermission(Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED)
                 need.add(Manifest.permission.BLUETOOTH_SCAN);
@@ -354,6 +428,7 @@ public class MainActivity extends ComponentActivity implements
         if (companion != null) companion.stop();
         if (vision != null) vision.close();
         if (moodEngine != null) moodEngine.stop();
+        if (ai != null) ai.disconnect();
         stopRobotInternal();
         if (ble != null) ble.close();
         super.onDestroy();
@@ -362,6 +437,83 @@ public class MainActivity extends ComponentActivity implements
     @Override public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus) immersive();
+    }
+
+    private String buildAiPersona() {
+        int happy = moodEngine == null ? 70 : moodEngine.getHappiness();
+        int curious = moodEngine == null ? 40 : moodEngine.getCuriosity();
+        int bored = moodEngine == null ? 10 : moodEngine.getBoredom();
+        return "You are a tiny home companion robot with a cute, warm, playful personality. " +
+                "Speak naturally in Egyptian Arabic (Masri) unless the user asks for another language. " +
+                "Your voice should feel youthful, soft, friendly and animated, never like a scary adult narrator, " +
+                "but do not imitate a baby. Keep most replies short: usually one or two sentences. " +
+                "Use emotion in your real voice: little laughs, curiosity, excitement, sleepy softness, or a mild playful pout when appropriate. " +
+                "Never guilt the user for leaving you alone and never act emotionally dependent. " +
+                "You are physically a small wheeled robot in the room. Do not claim you moved unless the app actually moved you. " +
+                "Current hidden personality meters (do not read these numbers aloud): happiness=" + happy +
+                ", curiosity=" + curious + ", boredom=" + bored + ". " +
+                "Let these meters gently influence your tone. If curiosity is high, ask a small question. " +
+                "If boredom is high, be playfully bored, not sad or manipulative. If happiness is high, sound bright and affectionate.";
+    }
+
+    // ---- Realtime AI callbacks ----
+    @Override public void onAiStatus(String message) {
+        runOnUiThread(() -> aiStatusText.setText(message));
+    }
+
+    @Override public void onAiConnected() {
+        runOnUiThread(() -> {
+            aiConnectButton.setText("Disconnect AI");
+            aiStatusText.setText("AI READY 🎙️ — talk normally");
+            temporaryEmotion(Emotion.EXCITED, 1000L);
+        });
+    }
+
+    @Override public void onAiDisconnected() {
+        runOnUiThread(() -> {
+            aiConnectButton.setText("Connect AI");
+            faceView.setTalking(false);
+            faceView.setEmotion(moodEngine.currentEmotion());
+        });
+    }
+
+    @Override public void onUserSpeechStarted() {
+        runOnUiThread(() -> {
+            companion.pauseFor(4500L);
+            faceView.setTalking(false);
+            faceView.setEmotion(Emotion.CURIOUS);
+        });
+    }
+
+    @Override public void onUserSpeechStopped() {
+        runOnUiThread(() -> {
+            moodEngine.talkedTo();
+            if (ai != null && ai.isConnected()) ai.updatePersona(buildAiPersona());
+        });
+    }
+
+    @Override public void onAssistantAudioStarted() {
+        runOnUiThread(() -> {
+            companion.pauseFor(6000L);
+            faceView.setEmotion(Emotion.TALKING);
+            faceView.setTalking(true);
+        });
+    }
+
+    @Override public void onAssistantAudioDone() {
+        runOnUiThread(() -> {
+            faceView.setTalking(false);
+            faceView.setEmotion(moodEngine.currentEmotion());
+        });
+    }
+
+    @Override public void onAssistantTranscript(String transcript) {
+        runOnUiThread(() -> {
+            // Transcript stays only in the hidden debug panel; normal face remains text-free.
+            if (transcript != null && !transcript.trim().isEmpty()) {
+                aiStatusText.setText("AI: " + transcript.trim());
+            }
+        });
     }
 
     private static int clamp(int v, int min, int max) {
