@@ -62,7 +62,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
                 android:layout_marginBottom="4dp"
-                android:text="v0.9 — MULTI-PROVIDER AI"
+                android:text="v0.9.3 — GEMINI AUDIO FIX"
                 android:textColor="#FFFFD54F"
                 android:textSize="12sp"
                 android:textStyle="bold" />

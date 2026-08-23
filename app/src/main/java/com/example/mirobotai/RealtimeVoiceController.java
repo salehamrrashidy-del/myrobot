@@ -369,7 +369,6 @@ public class RealtimeVoiceController {
             setup.put("model", "models/" + model);
             JSONArray modalities = new JSONArray();
             modalities.put("AUDIO");
-            setup.put("responseModalities", modalities);
 
             JSONObject systemInstruction = new JSONObject();
             JSONArray parts = new JSONArray();
@@ -385,7 +384,14 @@ public class RealtimeVoiceController {
             voiceConfig.put("prebuiltVoiceConfig", prebuilt);
             JSONObject speechConfig = new JSONObject();
             speechConfig.put("voiceConfig", voiceConfig);
-            setup.put("speechConfig", speechConfig);
+
+            // Native-audio Live models auto-detect language. Do not set languageCode;
+            // Gemini can close with 1007 when a native-audio model receives one.
+            // Keep response modalities and voice configuration inside generationConfig.
+            JSONObject generationConfig = new JSONObject();
+            generationConfig.put("responseModalities", modalities);
+            generationConfig.put("speechConfig", speechConfig);
+            setup.put("generationConfig", generationConfig);
 
             JSONObject root = new JSONObject();
             root.put("setup", setup);
