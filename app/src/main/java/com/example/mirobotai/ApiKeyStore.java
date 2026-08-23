@@ -14,10 +14,10 @@ import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 
-/** Stores the API key encrypted with Android Keystore. */
+/** Stores provider API keys encrypted with Android Keystore. */
 public class ApiKeyStore {
     private static final String PREFS = "mirobot_ai_secure";
-    private static final String ALIAS = "mirobot_openai_key";
+    private static final String ALIAS = "mirobot_ai_key_v2";
     private static final String CIPHER = "AES/GCM/NoPadding";
 
     private final SharedPreferences prefs;
@@ -27,8 +27,25 @@ public class ApiKeyStore {
     }
 
     public void save(String value) throws Exception {
+        save("default", value);
+    }
+
+    public String load() {
+        return load("default");
+    }
+
+    public boolean hasKey() {
+        return hasKey("default");
+    }
+
+    public void clear() {
+        clear("default");
+    }
+
+    public void save(String slot, String value) throws Exception {
+        String safeSlot = normalizeSlot(slot);
         if (value == null || value.trim().isEmpty()) {
-            clear();
+            clear(safeSlot);
             return;
         }
         SecretKey key = getOrCreateKey();
@@ -36,15 +53,16 @@ public class ApiKeyStore {
         cipher.init(Cipher.ENCRYPT_MODE, key);
         byte[] encrypted = cipher.doFinal(value.trim().getBytes(StandardCharsets.UTF_8));
         prefs.edit()
-                .putString("iv", Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP))
-                .putString("data", Base64.encodeToString(encrypted, Base64.NO_WRAP))
+                .putString(safeSlot + "_iv", Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP))
+                .putString(safeSlot + "_data", Base64.encodeToString(encrypted, Base64.NO_WRAP))
                 .apply();
     }
 
-    public String load() {
+    public String load(String slot) {
         try {
-            String iv64 = prefs.getString("iv", null);
-            String data64 = prefs.getString("data", null);
+            String safeSlot = normalizeSlot(slot);
+            String iv64 = prefs.getString(safeSlot + "_iv", null);
+            String data64 = prefs.getString(safeSlot + "_data", null);
             if (iv64 == null || data64 == null) return null;
             SecretKey key = getOrCreateKey();
             Cipher cipher = Cipher.getInstance(CIPHER);
@@ -57,13 +75,19 @@ public class ApiKeyStore {
         }
     }
 
-    public boolean hasKey() {
-        String value = load();
+    public boolean hasKey(String slot) {
+        String value = load(slot);
         return value != null && !value.isEmpty();
     }
 
-    public void clear() {
-        prefs.edit().remove("iv").remove("data").apply();
+    public void clear(String slot) {
+        String safeSlot = normalizeSlot(slot);
+        prefs.edit().remove(safeSlot + "_iv").remove(safeSlot + "_data").apply();
+    }
+
+    private String normalizeSlot(String slot) {
+        if (slot == null || slot.trim().isEmpty()) return "default";
+        return slot.trim().toLowerCase().replaceAll("[^a-z0-9_]+", "_");
     }
 
     private SecretKey getOrCreateKey() throws Exception {

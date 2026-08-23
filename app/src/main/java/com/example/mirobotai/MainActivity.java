@@ -4,6 +4,7 @@ import android.Manifest;
 import android.annotation.SuppressLint;
 import android.bluetooth.BluetoothDevice;
 import android.content.pm.ActivityInfo;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Build;
 import android.os.Bundle;
@@ -14,11 +15,13 @@ import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
 import android.widget.ArrayAdapter;
+import android.widget.AdapterView;
 import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.ListView;
 import android.widget.EditText;
 import android.widget.SeekBar;
+import android.widget.Spinner;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -52,9 +55,13 @@ public class MainActivity extends ComponentActivity implements
     private CheckBox roamToggle;
     private TextView aiStatusText;
     private EditText apiKeyInput;
+    private EditText modelInput;
+    private EditText endpointInput;
+    private Spinner providerSpinner;
     private Button aiConnectButton;
     private RealtimeVoiceController ai;
     private ApiKeyStore apiKeyStore;
+    private SharedPreferences aiPrefs;
     private long lastFocusAiPromptMs = 0L;
     private SeekBar speedBar;
     private ArrayAdapter<String> listAdapter;
@@ -82,6 +89,9 @@ public class MainActivity extends ComponentActivity implements
         roamToggle = findViewById(R.id.roamToggle);
         aiStatusText = findViewById(R.id.aiStatusText);
         apiKeyInput = findViewById(R.id.apiKeyInput);
+        modelInput = findViewById(R.id.modelInput);
+        endpointInput = findViewById(R.id.endpointInput);
+        providerSpinner = findViewById(R.id.providerSpinner);
         aiConnectButton = findViewById(R.id.aiConnectButton);
         speedBar = findViewById(R.id.speedBar);
 
@@ -99,8 +109,9 @@ public class MainActivity extends ComponentActivity implements
 
         vision = new FaceVisionController(this, this, this);
         apiKeyStore = new ApiKeyStore(this);
+        aiPrefs = getSharedPreferences("mirobot_ai_provider", MODE_PRIVATE);
         ai = new RealtimeVoiceController(this, this);
-        if (apiKeyStore.hasKey()) aiStatusText.setText("AI key saved securely");
+        setupProviderUi();
 
         faceView.setOnClickListener(v -> {
             moodEngine.interacted();
@@ -147,18 +158,40 @@ public class MainActivity extends ComponentActivity implements
         });
 
         findViewById(R.id.saveAiKeyButton).setOnClickListener(v -> {
+            RealtimeVoiceController.Provider provider = selectedProvider();
             String value = apiKeyInput.getText().toString().trim();
-            if (value.isEmpty()) {
-                Toast.makeText(this, "Paste your OpenAI API key first", Toast.LENGTH_SHORT).show();
+            if (value.isEmpty() && !apiKeyStore.hasKey(provider.slot)) {
+                Toast.makeText(this, "Paste an API key for " + provider.label, Toast.LENGTH_SHORT).show();
                 return;
             }
             try {
-                apiKeyStore.save(value);
+                if (!value.isEmpty()) apiKeyStore.save(provider.slot, value);
+                saveProviderSettings(provider);
                 apiKeyInput.setText("");
-                aiStatusText.setText("AI key saved securely on this phone");
+                aiStatusText.setText(provider.label + " saved securely");
             } catch (Exception e) {
-                aiStatusText.setText("Could not save key");
+                aiStatusText.setText("Could not save provider settings");
             }
+        });
+
+        findViewById(R.id.testAiKeyButton).setOnClickListener(v -> {
+            RealtimeVoiceController.Provider provider = selectedProvider();
+            String typedKey = apiKeyInput.getText().toString().trim();
+            if (!typedKey.isEmpty()) {
+                try {
+                    apiKeyStore.save(provider.slot, typedKey);
+                    apiKeyInput.setText("");
+                } catch (Exception e) {
+                    aiStatusText.setText("Could not save API key");
+                    return;
+                }
+            }
+            String key = apiKeyStore.load(provider.slot);
+            if (key == null || key.isEmpty()) {
+                aiStatusText.setText("Paste + save a key first");
+                return;
+            }
+            ai.testApiKey(provider, key);
         });
 
         aiConnectButton.setOnClickListener(v -> {
@@ -167,16 +200,21 @@ public class MainActivity extends ComponentActivity implements
                 aiConnectButton.setText("Connect AI");
                 return;
             }
-            String key = apiKeyStore.load();
-            if ((key == null || key.isEmpty()) && !apiKeyInput.getText().toString().trim().isEmpty()) {
+            RealtimeVoiceController.Provider provider = selectedProvider();
+            String typedKey = apiKeyInput.getText().toString().trim();
+            if (!typedKey.isEmpty()) {
                 try {
-                    apiKeyStore.save(apiKeyInput.getText().toString().trim());
+                    apiKeyStore.save(provider.slot, typedKey);
                     apiKeyInput.setText("");
-                    key = apiKeyStore.load();
-                } catch (Exception ignored) { }
+                } catch (Exception e) {
+                    aiStatusText.setText("Could not save API key");
+                    return;
+                }
             }
+            saveProviderSettings(provider);
+            String key = apiKeyStore.load(provider.slot);
             if (key == null || key.isEmpty()) {
-                aiStatusText.setText("Paste + save API key first");
+                aiStatusText.setText("Paste + save a key for " + provider.label);
                 return;
             }
             if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
@@ -184,7 +222,8 @@ public class MainActivity extends ComponentActivity implements
                 aiStatusText.setText("Allow microphone, then tap Connect AI again");
                 return;
             }
-            ai.connect(key, buildAiPersona());
+            ai.connect(provider, key, endpointInput.getText().toString().trim(),
+                    modelInput.getText().toString().trim(), buildAiPersona());
         });
 
         findViewById(R.id.aiHelloButton).setOnClickListener(v -> {
@@ -437,6 +476,57 @@ public class MainActivity extends ComponentActivity implements
     @Override public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus) immersive();
+    }
+
+    private void setupProviderUi() {
+        RealtimeVoiceController.Provider[] providers = RealtimeVoiceController.Provider.values();
+        ArrayAdapter<RealtimeVoiceController.Provider> adapter = new ArrayAdapter<>(
+                this, android.R.layout.simple_spinner_item, providers);
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        providerSpinner.setAdapter(adapter);
+        int saved = aiPrefs.getInt("selected_provider", 0);
+        if (saved < 0 || saved >= providers.length) saved = 0;
+        providerSpinner.setSelection(saved);
+        providerSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                loadProviderSettings(providers[position]);
+            }
+            @Override public void onNothingSelected(AdapterView<?> parent) { }
+        });
+        loadProviderSettings(providers[saved]);
+    }
+
+    private RealtimeVoiceController.Provider selectedProvider() {
+        Object item = providerSpinner.getSelectedItem();
+        return item instanceof RealtimeVoiceController.Provider
+                ? (RealtimeVoiceController.Provider) item
+                : RealtimeVoiceController.Provider.GEMINI;
+    }
+
+    private void loadProviderSettings(RealtimeVoiceController.Provider provider) {
+        String model = aiPrefs.getString(provider.slot + "_model", provider.defaultModel);
+        String endpoint = aiPrefs.getString(provider.slot + "_endpoint", provider.defaultEndpoint);
+        modelInput.setText(model == null ? "" : model);
+        endpointInput.setText(endpoint == null ? "" : endpoint);
+        if (provider == RealtimeVoiceController.Provider.GEMINI) {
+            endpointInput.setEnabled(false);
+            endpointInput.setHint("Gemini endpoint is automatic");
+        } else {
+            endpointInput.setEnabled(true);
+            endpointInput.setHint(provider == RealtimeVoiceController.Provider.OPENAI
+                    ? "Optional: custom OpenAI Realtime WebSocket URL"
+                    : "Required: OpenAI-compatible Realtime WebSocket URL");
+        }
+        boolean saved = apiKeyStore.hasKey(provider.slot);
+        aiStatusText.setText(provider.label + (saved ? " — key saved" : " — paste a key"));
+    }
+
+    private void saveProviderSettings(RealtimeVoiceController.Provider provider) {
+        aiPrefs.edit()
+                .putInt("selected_provider", provider.ordinal())
+                .putString(provider.slot + "_model", modelInput.getText().toString().trim())
+                .putString(provider.slot + "_endpoint", endpointInput.getText().toString().trim())
+                .apply();
     }
 
     private String buildAiPersona() {
