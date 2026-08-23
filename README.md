@@ -1,4 +1,4 @@
-Mi Robot AI v0.7.2
+Mi Robot AI v0.7.3
 
 Build compatibility fix for the v0.7 companion vision release.
 
@@ -26,5 +26,5 @@ This version detects and tracks faces but does not yet identify the owner. Relia
 Long-press the face to open the hidden control panel.
 
 
-## v0.7.2 build fix
+## v0.7.3 build fix
 Added `gradle.properties` with AndroidX enabled so CameraX and ML Kit dependencies build correctly in GitHub Actions.
