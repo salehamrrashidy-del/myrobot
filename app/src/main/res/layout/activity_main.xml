@@ -62,7 +62,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
                 android:layout_marginBottom="4dp"
-                android:text="v0.10.0 — SAFER ROAM + COMPANION"
+                android:text="v1.0.0 — LIVE INFO + TOOLS"
                 android:textColor="#FFFFD54F"
                 android:textSize="12sp"
                 android:textStyle="bold" />
@@ -208,38 +208,15 @@
                 android:id="@+id/roamToggle"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Free roam — explore with short moves"
+                android:text="Roam mode — move around"
                 android:textColor="#FFFFFFFF" />
-
-            <CheckBox
-                android:id="@+id/edgeGuardToggle"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:checked="true"
-                android:text="Table edge guard — camera safety"
-                android:textColor="#FFFFFFFF" />
-
-            <Button
-                android:id="@+id/calibrateEdgeButton"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="CALIBRATE SAFE SURFACE" />
-
-            <TextView
-                android:id="@+id/edgeGuardStatusText"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Edge guard ON — calibrate in the safe middle of the table"
-                android:textColor="#FFFFD54F"
-                android:textSize="11sp" />
 
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:text="For a table: point the front camera slightly downward, put the robot well away from the edge, then calibrate once. The camera guard is experimental — do not leave the robot unattended on a high surface."
+                android:text="Roam now moves every few seconds with short safe pulses. Use only in a clear open area."
                 android:textColor="#99FFFFFF"
-                android:textSize="10sp" />
+                android:textSize="11sp" />
 
             <Button
                 android:id="@+id/scanButton"

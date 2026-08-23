@@ -38,8 +38,6 @@ public class FaceVisionController {
         void onNoFace();
         /** Heuristic: same face stayed fairly still for a long time. */
         void onFocusLikeBehavior();
-        /** Camera-based surface/cliff estimate for short forward movement. */
-        void onSurfaceSafety(boolean calibrated, boolean safe, float confidence, int edgeSide, String reason);
         void onVisionStatus(String message);
     }
 
@@ -50,7 +48,6 @@ public class FaceVisionController {
     private final AtomicBoolean processing = new AtomicBoolean(false);
 
     private final FaceDetector detector;
-    private final SurfaceSafetyDetector surfaceDetector = new SurfaceSafetyDetector();
     private ProcessCameraProvider cameraProvider;
     private boolean running;
 
@@ -68,7 +65,7 @@ public class FaceVisionController {
                 .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_FAST)
                 .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_ALL)
                 .enableTracking()
-                .setMinFaceSize(0.08f)
+                .setMinFaceSize(0.16f)
                 .build();
         detector = FaceDetection.getClient(options);
     }
@@ -119,11 +116,6 @@ public class FaceVisionController {
         }
 
         int rotation = proxy.getImageInfo().getRotationDegrees();
-
-        SurfaceSafetyDetector.Result surface = surfaceDetector.analyze(mediaImage, rotation);
-        listener.onSurfaceSafety(surface.calibrated, surface.safe, surface.confidence,
-                surface.edgeSide, surface.reason);
-
         InputImage input = InputImage.fromMediaImage(mediaImage, rotation);
         int frameWidth = (rotation == 90 || rotation == 270) ? proxy.getHeight() : proxy.getWidth();
 
@@ -179,16 +171,6 @@ public class FaceVisionController {
         }
 
         listener.onFace(normalized, size, smileValue);
-    }
-
-
-    public void calibrateSafeSurface() {
-        surfaceDetector.requestCalibration();
-        listener.onVisionStatus("Hold robot still on a safe flat surface — calibrating…");
-    }
-
-    public boolean isSurfaceCalibrated() {
-        return surfaceDetector.isCalibrated();
     }
 
     public void stop() {
