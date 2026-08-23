@@ -99,20 +99,21 @@ public class RealtimeVoiceController {
     private boolean manualDisconnect = false;
     private String reconnectApiKey = "";
     private final android.os.Handler retryHandler = new android.os.Handler(android.os.Looper.getMainLooper());
-    private final Runnable geminiSetupTimeout = () -> {
-        if (provider == Provider.GEMINI && connected && !sessionReady) {
-            status("Gemini setup timed out after 10s ❌");
-            WebSocket ws = socket;
-            socket = null;
-            connected = false;
-            if (ws != null) { try { ws.close(1000, "setup timeout"); } catch (Exception ignored) {} }
-            if (listener != null) listener.onAiDisconnected();
-        }
-    };
+    private final Runnable geminiSetupTimeout;
 
     public RealtimeVoiceController(Context context, Listener listener) {
         this.context = context.getApplicationContext();
         this.listener = listener;
+        this.geminiSetupTimeout = () -> {
+            if (provider == Provider.GEMINI && connected && !sessionReady) {
+                status("Gemini setup timed out after 10s ❌");
+                WebSocket ws = socket;
+                socket = null;
+                connected = false;
+                if (ws != null) { try { ws.close(1000, "setup timeout"); } catch (Exception ignored) {} }
+                if (this.listener != null) this.listener.onAiDisconnected();
+            }
+        };
         client = new OkHttpClient.Builder()
                 .pingInterval(15, TimeUnit.SECONDS)
                 .readTimeout(0, TimeUnit.MILLISECONDS)
