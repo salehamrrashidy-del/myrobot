@@ -35,7 +35,6 @@ public class MainActivity extends Activity implements MiRobotBleManager.Listener
     private MoodEngine moodEngine;
     private RobotFaceView faceView;
     private TextView statusText;
-    private TextView moodText;
     private LinearLayout debugPanel;
     private CheckBox invertLeft;
     private CheckBox invertRight;
@@ -55,18 +54,16 @@ public class MainActivity extends Activity implements MiRobotBleManager.Listener
 
         faceView = findViewById(R.id.faceView);
         statusText = findViewById(R.id.statusText);
-        moodText = findViewById(R.id.moodText);
         debugPanel = findViewById(R.id.debugPanel);
         invertLeft = findViewById(R.id.invertLeft);
         invertRight = findViewById(R.id.invertRight);
         speedBar = findViewById(R.id.speedBar);
 
         ble = new MiRobotBleManager(this, this);
-        moodEngine = new MoodEngine((mood, emotion) -> runOnUiThread(() -> {
+        moodEngine = new MoodEngine(emotion -> runOnUiThread(() -> {
             if (faceView.getEmotion() != Emotion.EXCITED && faceView.getEmotion() != Emotion.SURPRISED) {
                 faceView.setEmotion(emotion);
             }
-            moodText.setText("mood " + mood + "%");
         }));
         moodEngine.start();
 

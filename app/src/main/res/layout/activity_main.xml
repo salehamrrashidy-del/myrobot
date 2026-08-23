@@ -2,38 +2,13 @@
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#070B10">
+    android:background="#030507">
 
     <com.example.mirobotai.RobotFaceView
         android:id="@+id/faceView"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:contentDescription="Robot face" />
-
-    <TextView
-        android:id="@+id/statusText"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="top|center_horizontal"
-        android:layout_marginTop="14dp"
-        android:background="#55000000"
-        android:paddingLeft="14dp"
-        android:paddingTop="7dp"
-        android:paddingRight="14dp"
-        android:paddingBottom="7dp"
-        android:text="Long-press face for controls"
-        android:textColor="#BFFFFFFF"
-        android:textSize="13sp" />
-
-    <TextView
-        android:id="@+id/moodText"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="bottom|center_horizontal"
-        android:layout_marginBottom="12dp"
-        android:text="mood 78%"
-        android:textColor="#55FFFFFF"
-        android:textSize="11sp" />
 
     <LinearLayout
         android:id="@+id/debugPanel"
@@ -66,6 +41,16 @@
                 android:layout_height="48dp"
                 android:text="✕" />
         </LinearLayout>
+
+        <TextView
+            android:id="@+id/statusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingTop="4dp"
+            android:paddingBottom="4dp"
+            android:text="Long-press face for controls"
+            android:textColor="#CCFFFFFF"
+            android:textSize="13sp" />
 
         <Button
             android:id="@+id/scanButton"
@@ -147,13 +132,5 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="Talking face preview" />
-
-        <TextView
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:text="No Android TTS is used. Natural Arabic speech-to-speech is the next connection step."
-            android:textColor="#AAFFFFFF"
-            android:textSize="12sp" />
     </LinearLayout>
 </FrameLayout>
