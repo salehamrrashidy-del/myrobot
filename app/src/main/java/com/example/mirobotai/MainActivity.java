@@ -152,13 +152,32 @@ public class MainActivity extends ComponentActivity implements
         visionToggle.setOnCheckedChangeListener((button, checked) -> {
             if (checked) startVisionIfAllowed();
             else {
+                // Safe roaming depends on the camera edge guard, so turning vision off
+                // also turns autonomous roaming off.
+                if (roamToggle != null && roamToggle.isChecked()) roamToggle.setChecked(false);
                 vision.stop();
                 faceView.look(0f);
                 visionStatusText.setText("Vision OFF");
             }
         });
         companionToggle.setOnCheckedChangeListener((button, checked) -> companion.setCompanionMode(checked));
-        roamToggle.setOnCheckedChangeListener((button, checked) -> companion.setRoamMode(checked));
+        roamToggle.setOnCheckedChangeListener((button, checked) -> {
+            if (!checked) {
+                companion.setRoamMode(false);
+                return;
+            }
+            if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                visionStatusText.setText("Camera permission is required for safe roam");
+                requestNeededPermissions();
+                roamToggle.setChecked(false);
+                return;
+            }
+            if (!visionToggle.isChecked()) visionToggle.setChecked(true);
+            // Learn the current safe tabletop/floor while the robot is still. The
+            // CompanionController refuses forward motion until this finishes.
+            vision.resetCliffCalibration();
+            companion.setRoamMode(true);
+        });
 
         findViewById(R.id.happyButton).setOnClickListener(v -> temporaryEmotion(Emotion.HAPPY, 2500));
         findViewById(R.id.upsetButton).setOnClickListener(v -> temporaryEmotion(Emotion.UPSET, 2500));
@@ -379,6 +398,15 @@ public class MainActivity extends ComponentActivity implements
 
     @Override public void onVisionStatus(String message) {
         runOnUiThread(() -> visionStatusText.setText(message));
+    }
+
+    @Override public void onGroundSafety(boolean ready, boolean safe, boolean edgeRisk,
+                                         float confidence, int edgeSide, String message) {
+        runOnUiThread(() -> {
+            companion.groundSafety(ready, safe, edgeRisk, confidence, edgeSide);
+            visionStatusText.setText(message);
+            if (edgeRisk) stopRobot();
+        });
     }
 
     // ---- Companion motion sink ----
