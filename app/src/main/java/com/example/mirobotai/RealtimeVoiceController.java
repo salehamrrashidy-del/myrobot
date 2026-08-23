@@ -27,6 +27,7 @@ import okhttp3.Request;
 import okhttp3.Response;
 import okhttp3.WebSocket;
 import okhttp3.WebSocketListener;
+import okio.ByteString;
 
 /**
  * Multi-provider realtime speech controller.
@@ -106,7 +107,7 @@ public class RealtimeVoiceController {
         this.listener = listener;
         this.geminiSetupTimeout = () -> {
             if (provider == Provider.GEMINI && connected && !sessionReady) {
-                status("Gemini setup timed out after 10s ❌");
+                status("Gemini setup timed out after 30s ❌ — no setupComplete received");
                 WebSocket ws = socket;
                 socket = null;
                 connected = false;
@@ -131,6 +132,10 @@ public class RealtimeVoiceController {
         sessionReady = false;
         this.provider = provider == null ? Provider.GEMINI : provider;
         this.model = (model == null || model.trim().isEmpty()) ? this.provider.defaultModel : model.trim();
+        if (this.provider == Provider.GEMINI && !isGeminiLiveModel(this.model)) {
+            status("Gemini voice needs a Live model. Use: " + Provider.GEMINI.defaultModel);
+            return;
+        }
         this.customEndpoint = endpoint == null ? "" : endpoint.trim();
         this.lastInstructions = instructions == null ? "" : instructions;
         this.reconnectApiKey = apiKey == null ? "" : apiKey.trim();
@@ -156,9 +161,9 @@ public class RealtimeVoiceController {
                 if (RealtimeVoiceController.this.provider == Provider.GEMINI) {
                     configureGeminiSession(lastInstructions);
                     // Gemini signals setupComplete before we show READY/start the mic.
-                    status("Gemini connected — setting up audio (max 10s)…");
+                    status("Gemini connected — waiting for setupComplete (max 30s)…");
                     retryHandler.removeCallbacks(geminiSetupTimeout);
-                    retryHandler.postDelayed(geminiSetupTimeout, 10_000L);
+                    retryHandler.postDelayed(geminiSetupTimeout, 30_000L);
                 } else {
                     configureOpenAiSession(lastInstructions);
                     status("OpenAI socket connected — validating session…");
@@ -170,6 +175,12 @@ public class RealtimeVoiceController {
                 else handleOpenAiEvent(text);
             }
 
+            @Override public void onMessage(WebSocket webSocket, ByteString bytes) {
+                String text = bytes == null ? "" : bytes.utf8();
+                if (RealtimeVoiceController.this.provider == Provider.GEMINI) handleGeminiEvent(text);
+                else handleOpenAiEvent(text);
+            }
+
             @Override public void onClosing(WebSocket webSocket, int code, String reason) {
                 webSocket.close(code, reason);
             }
@@ -177,7 +188,6 @@ public class RealtimeVoiceController {
             @Override public void onClosed(WebSocket webSocket, int code, String reason) {
                 if (webSocket != socket) return;
                 connected = false;
-                boolean wasReady = sessionReady;
                 sessionReady = false;
                 stopMicrophone();
                 stopPlayback();
@@ -216,16 +226,18 @@ public class RealtimeVoiceController {
                 connected = true;
                 sessionReady = false;
                 configureGeminiSession(lastInstructions);
-                status("Gemini connected — setting up audio (max 10s)…");
+                status("Gemini connected — waiting for setupComplete (max 30s)…");
                 retryHandler.removeCallbacks(geminiSetupTimeout);
-                retryHandler.postDelayed(geminiSetupTimeout, 10_000L);
+                retryHandler.postDelayed(geminiSetupTimeout, 30_000L);
             }
             @Override public void onMessage(WebSocket webSocket, String text) { handleGeminiEvent(text); }
+            @Override public void onMessage(WebSocket webSocket, ByteString bytes) {
+                handleGeminiEvent(bytes == null ? "" : bytes.utf8());
+            }
             @Override public void onClosing(WebSocket webSocket, int code, String reason) { webSocket.close(code, reason); }
             @Override public void onClosed(WebSocket webSocket, int code, String reason) {
                 if (webSocket != socket) return;
                 connected = false;
-                boolean wasReady = sessionReady;
                 sessionReady = false;
                 stopMicrophone();
                 stopPlayback();
@@ -243,6 +255,12 @@ public class RealtimeVoiceController {
                 if (listener != null) listener.onAiDisconnected();
             }
         });
+    }
+
+    private static boolean isGeminiLiveModel(String model) {
+        if (model == null) return false;
+        String m = model.trim().toLowerCase();
+        return m.contains("live") || m.contains("native-audio");
     }
 
     private Request buildRequest(String apiKey) {
@@ -435,6 +453,9 @@ public class RealtimeVoiceController {
             JSONObject setup = new JSONObject();
             setup.put("model", "models/" + model);
 
+            // IMPORTANT: The Google GenAI SDK serializes LiveConnectConfig
+            // responseModalities under setup.generationConfig. Sending it there
+            // matches the canonical BidiGenerateContentSetup wire schema.
             JSONArray modalities = new JSONArray();
             modalities.put("AUDIO");
             JSONObject generationConfig = new JSONObject();
@@ -451,7 +472,10 @@ public class RealtimeVoiceController {
 
             JSONObject root = new JSONObject();
             root.put("setup", setup);
-            socket.send(root.toString());
+            boolean sent = socket.send(root.toString());
+            status(sent
+                    ? "Gemini socket open — setup sent, waiting for setupComplete…"
+                    : "Gemini setup could not be sent ❌");
         } catch (JSONException e) {
             status("Gemini setup error: " + e.getMessage());
         }
@@ -680,7 +704,14 @@ public class RealtimeVoiceController {
                 return;
             }
             JSONObject server = event.optJSONObject("serverContent");
-            if (server == null) return;
+            if (server == null) {
+                if (!sessionReady) {
+                    java.util.Iterator<String> keys = event.keys();
+                    String firstKey = keys.hasNext() ? keys.next() : "unknown";
+                    status("Gemini replied during setup: " + firstKey);
+                }
+                return;
+            }
 
             if (server.optBoolean("interrupted", false)) {
                 flushPlayback();
@@ -722,7 +753,10 @@ public class RealtimeVoiceController {
                 finishAssistantAudio();
             }
         } catch (Exception e) {
-            status("Gemini event error: " + e.getMessage());
+            String preview = text == null ? "" : text.replace('\n', ' ').replace('\r', ' ').trim();
+            if (preview.length() > 180) preview = preview.substring(0, 180);
+            status("Gemini event parse error: " + (e.getMessage() == null ? "unknown" : e.getMessage())
+                    + (preview.isEmpty() ? "" : " — " + preview));
         }
     }
 

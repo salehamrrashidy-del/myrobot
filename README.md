@@ -1,14 +1,23 @@
-# MiRobotAI v0.9.5.1
+# MiRobotAI v0.9.7
 
-Fixes the long Gemini “setting up audio” wait.
+AI connection repair build.
 
-- Uses current `gemini-3.1-flash-live-preview` by default.
-- Uses a minimal Gemini Live setup first (audio + persona only) to reduce setup failures.
-- No automatic 1008/1011 retry loop.
-- Setup has a 10-second timeout, so it never hangs indefinitely.
-- Once the realtime session is stable, voice selection can be added back safely.
+- Gemini Live setup now uses the canonical `setup.generationConfig.responseModalities` wire format used by Google's current GenAI SDK.
+- Rejects non-Live Gemini models before opening the voice socket.
+- Migrates an accidentally saved normal Gemini model back to `gemini-3.1-flash-live-preview`.
+- Shows whether the setup frame was actually sent and gives better parse/close diagnostics.
+- Gemini endpoint remains automatic; do not fill the Text/Endpoint field when Gemini is selected.
 
-Build with the included GitHub Actions workflow and install the debug APK.
+# MiRobotAI v0.9.6 — Gemini Live setup fix
 
+This build focuses on the Gemini Live connection handshake.
 
-Build fix: initializes the Gemini setup-timeout callback inside the constructor so Java no longer reports `variable listener might not have been initialized`.
+Changes:
+- Uses `gemini-3.1-flash-live-preview` by default.
+- Sends the initial Gemini WebSocket setup in the same shape as Google's current raw WebSocket quickstart (`responseModalities` directly in `setup`).
+- Waits up to 30 seconds for `setupComplete` instead of 10 seconds.
+- Handles both text and binary WebSocket messages.
+- Shows the first unexpected Gemini setup message type instead of silently waiting.
+- Microphone starts only after `setupComplete`.
+
+Use Gemini Live, keep the default model, save one Gemini API key, then tap Connect AI.

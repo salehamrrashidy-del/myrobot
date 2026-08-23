@@ -505,10 +505,13 @@ public class MainActivity extends ComponentActivity implements
 
     private void loadProviderSettings(RealtimeVoiceController.Provider provider) {
         String model = aiPrefs.getString(provider.slot + "_model", provider.defaultModel);
-        if (provider == RealtimeVoiceController.Provider.GEMINI
-                && "gemini-2.5-flash-native-audio-preview-12-2025".equals(model)) {
-            model = provider.defaultModel;
-            aiPrefs.edit().putString(provider.slot + "_model", model).apply();
+        if (provider == RealtimeVoiceController.Provider.GEMINI) {
+            String m = model == null ? "" : model.toLowerCase();
+            boolean liveCapable = m.contains("live") || m.contains("native-audio");
+            if (!liveCapable || "gemini-2.5-flash-native-audio-preview-12-2025".equals(model)) {
+                model = provider.defaultModel;
+                aiPrefs.edit().putString(provider.slot + "_model", model).apply();
+            }
         }
         String endpoint = aiPrefs.getString(provider.slot + "_endpoint", provider.defaultEndpoint);
         modelInput.setText(model == null ? "" : model);
