@@ -41,7 +41,7 @@ import okhttp3.WebSocketListener;
  */
 public class RealtimeVoiceController {
     public enum Provider {
-        GEMINI("Gemini Live", "gemini", "gemini-3.1-flash-live-preview", ""),
+        GEMINI("Gemini Live", "gemini", "gemini-2.5-flash-native-audio-preview-12-2025", ""),
         OPENAI("OpenAI Realtime", "openai", "gpt-realtime-2.1-mini", "wss://api.openai.com/v1/realtime"),
         CUSTOM_OPENAI("Custom OpenAI-compatible", "custom", "", "");
 
@@ -95,6 +95,10 @@ public class RealtimeVoiceController {
     private String lastInstructions = "";
     private boolean localSpeech = false;
     private long lastLoudMs = 0L;
+    private int geminiRetryCount = 0;
+    private boolean manualDisconnect = false;
+    private String reconnectApiKey = "";
+    private final android.os.Handler retryHandler = new android.os.Handler(android.os.Looper.getMainLooper());
 
     public RealtimeVoiceController(Context context, Listener listener) {
         this.context = context.getApplicationContext();
@@ -109,12 +113,16 @@ public class RealtimeVoiceController {
     public Provider getProvider() { return provider; }
 
     public void connect(Provider provider, String apiKey, String endpoint, String model, String instructions) {
+        manualDisconnect = true;
         disconnect();
+        manualDisconnect = false;
+        geminiRetryCount = 0;
         sessionReady = false;
         this.provider = provider == null ? Provider.GEMINI : provider;
         this.model = (model == null || model.trim().isEmpty()) ? this.provider.defaultModel : model.trim();
         this.customEndpoint = endpoint == null ? "" : endpoint.trim();
         this.lastInstructions = instructions == null ? "" : instructions;
+        this.reconnectApiKey = apiKey == null ? "" : apiKey.trim();
 
         if (apiKey == null || apiKey.trim().isEmpty()) {
             status("No API key saved for " + this.provider.label);
@@ -154,15 +162,26 @@ public class RealtimeVoiceController {
             }
 
             @Override public void onClosed(WebSocket webSocket, int code, String reason) {
+                if (webSocket != socket) return;
                 connected = false;
+                boolean wasReady = sessionReady;
                 sessionReady = false;
                 stopMicrophone();
                 stopPlayback();
+                if (!manualDisconnect && RealtimeVoiceController.this.provider == Provider.GEMINI
+                        && !wasReady && (code == 1008 || code == 1011) && geminiRetryCount < 2) {
+                    geminiRetryCount++;
+                    long delay = geminiRetryCount == 1 ? 1800L : 4000L;
+                    status("Gemini Live was busy — retrying " + geminiRetryCount + "/2…");
+                    retryHandler.postDelayed(() -> reconnectGemini(), delay);
+                    return;
+                }
                 status("AI disconnected (" + code + ")" + (reason == null || reason.isEmpty() ? "" : ": " + reason));
                 if (listener != null) listener.onAiDisconnected();
             }
 
             @Override public void onFailure(WebSocket webSocket, Throwable t, Response response) {
+                if (webSocket != socket) return;
                 connected = false;
                 sessionReady = false;
                 stopMicrophone();
@@ -176,6 +195,50 @@ public class RealtimeVoiceController {
                     if (detail.length() > 220) detail = detail.substring(0, 220);
                     msg = "HTTP " + response.code() + (detail.isEmpty() ? " — " + msg : " — " + detail);
                 }
+                status("AI connection error: " + msg);
+                if (listener != null) listener.onAiDisconnected();
+            }
+        });
+    }
+
+    private void reconnectGemini() {
+        if (manualDisconnect || reconnectApiKey == null || reconnectApiKey.isEmpty()) return;
+        Request request;
+        try { request = buildRequest(reconnectApiKey); }
+        catch (Exception e) { status("Gemini retry config error: " + e.getMessage()); return; }
+        socket = client.newWebSocket(request, new WebSocketListener() {
+            @Override public void onOpen(WebSocket webSocket, Response response) {
+                connected = true;
+                sessionReady = false;
+                configureGeminiSession(lastInstructions);
+                status("Gemini connected — setting up audio…");
+            }
+            @Override public void onMessage(WebSocket webSocket, String text) { handleGeminiEvent(text); }
+            @Override public void onClosing(WebSocket webSocket, int code, String reason) { webSocket.close(code, reason); }
+            @Override public void onClosed(WebSocket webSocket, int code, String reason) {
+                if (webSocket != socket) return;
+                connected = false;
+                boolean wasReady = sessionReady;
+                sessionReady = false;
+                stopMicrophone();
+                stopPlayback();
+                if (!manualDisconnect && !wasReady && (code == 1008 || code == 1011) && geminiRetryCount < 2) {
+                    geminiRetryCount++;
+                    long delay = geminiRetryCount == 1 ? 1800L : 4000L;
+                    status("Gemini Live was busy — retrying " + geminiRetryCount + "/2…");
+                    retryHandler.postDelayed(() -> reconnectGemini(), delay);
+                    return;
+                }
+                status("AI disconnected (" + code + ")" + (reason == null || reason.isEmpty() ? "" : ": " + reason));
+                if (listener != null) listener.onAiDisconnected();
+            }
+            @Override public void onFailure(WebSocket webSocket, Throwable t, Response response) {
+                if (webSocket != socket) return;
+                connected = false;
+                sessionReady = false;
+                stopMicrophone();
+                stopPlayback();
+                String msg = t == null ? "unknown error" : t.getMessage();
                 status("AI connection error: " + msg);
                 if (listener != null) listener.onAiDisconnected();
             }
@@ -216,7 +279,9 @@ public class RealtimeVoiceController {
         }
         Request req;
         if (provider == Provider.GEMINI) {
-            String url = "https://generativelanguage.googleapis.com/v1beta/models?key=" + Uri.encode(apiKey.trim());
+            String testModel = (model == null || model.trim().isEmpty()) ? Provider.GEMINI.defaultModel : model.trim();
+            String url = "https://generativelanguage.googleapis.com/v1beta/models/"
+                    + Uri.encode(testModel) + "?key=" + Uri.encode(apiKey.trim());
             req = new Request.Builder().url(url).get().build();
         } else {
             req = new Request.Builder()
@@ -234,7 +299,7 @@ public class RealtimeVoiceController {
                 try (Response r = response) {
                     String body = r.body() == null ? "" : r.body().string();
                     if (r.isSuccessful()) {
-                        status("KEY OK ✅ — " + p.label + ". Now tap Connect AI.");
+                        status("KEY + MODEL OK ✅ — " + p.label + ". Now tap Connect AI.");
                     } else {
                         String detail = extractApiError(body);
                         status("KEY FAILED ❌ — HTTP " + r.code() + (detail.isEmpty() ? "" : ": " + detail));
@@ -306,6 +371,8 @@ public class RealtimeVoiceController {
     }
 
     public void disconnect() {
+        manualDisconnect = true;
+        retryHandler.removeCallbacksAndMessages(null);
         connected = false;
         sessionReady = false;
         stopMicrophone();
@@ -379,7 +446,7 @@ public class RealtimeVoiceController {
             setup.put("systemInstruction", systemInstruction);
 
             JSONObject prebuilt = new JSONObject();
-            prebuilt.put("voiceName", "Puck");
+            prebuilt.put("voiceName", "Leda");
             JSONObject voiceConfig = new JSONObject();
             voiceConfig.put("prebuiltVoiceConfig", prebuilt);
             JSONObject speechConfig = new JSONObject();
@@ -610,6 +677,7 @@ public class RealtimeVoiceController {
         try {
             JSONObject event = new JSONObject(text);
             if (event.has("setupComplete")) {
+                geminiRetryCount = 0;
                 sessionReady = true;
                 status("Gemini Live READY 🎙️");
                 startMicrophone();

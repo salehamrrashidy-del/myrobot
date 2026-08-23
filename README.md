@@ -1,12 +1,10 @@
-# MiRobotAI v0.9.3 — Gemini native-audio fix
+# MiRobotAI v0.9.4
 
-This build fixes the Gemini Live `1007 / Invalid JSON payload received` problem caused by sending `languageCode` to a native-audio Live model. Native-audio models auto-detect the spoken language, so Egyptian Arabic is enforced through the robot system instructions instead.
+Gemini Live stability update.
 
-## Test
-1. Select Gemini Live.
-2. Save one Gemini API key.
-3. Tap TEST API KEY.
-4. If KEY OK, tap CONNECT AI.
-5. Wait for `Gemini Live READY` before speaking.
-
-Keep the robot wheels off the floor while testing autonomous movement.
+- Defaults Gemini to the official free-tier `gemini-2.5-flash-native-audio-preview-12-2025` Live model.
+- Migrates the previous Gemini 3.1 setting automatically.
+- Uses the youthful `Leda` voice.
+- API test checks access to the exact Live model, not just the account key.
+- Retries transient Gemini WebSocket 1008/1011 setup failures twice.
+- Direct audio-in/audio-out; no Android TTS.
