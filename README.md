@@ -1,43 +1,25 @@
-# MiRobotAI v0.8.1
+# MiRobotAI v0.9 — Multi-provider AI
 
-This build moves the **AI voice & personality** controls to the very TOP of the hidden panel so they cannot be missed. The panel also shows **v0.8.1 — AI BUILD** in yellow.
+This build keeps the working Mi Robot BLE motor control, LOOI-style face, face tracking, companion mode, roam mode, and hidden mood meters.
 
-# Mi Robot AI v0.8.1 — Realtime Voice + Roam Fix
+## AI providers
 
-This is the first AI-speaking build.
+The hidden control panel now lets you choose:
 
-## New in v0.8.1
+1. **Gemini Live** — paste a Google Gemini API key. Default model: `gemini-3.1-flash-live-preview`.
+2. **OpenAI Realtime** — paste an OpenAI API key. Default model: `gpt-realtime-mini`.
+3. **Custom OpenAI-compatible** — paste a key, model name, and WebSocket endpoint for a service that implements the OpenAI Realtime WebSocket protocol.
 
-- Realtime speech-to-speech AI (no Android TTS)
-- Egyptian Arabic personality prompt
-- Cute/warm/playful voice direction using the `marin` Realtime voice
-- Microphone listens continuously while AI is connected
-- Robot eyes animate while AI is speaking
-- Hidden happiness / curiosity / boredom values influence the AI personality
-- If vision notices the owner staying focused for a long time, the robot can ask a short cute Egyptian-Arabic question (20-minute cooldown)
-- Gentle Roam fixed: it is no longer blocked simply because the camera sees a face
-- Roam movements are more visible while remaining low-speed and short
-- Faster companion turning retained
+API keys are stored separately per provider and encrypted with Android Keystore.
 
-## First-time AI setup on the phone
+## Important
 
-1. Long-press the robot face to open hidden controls.
-2. In **AI voice & personality**, paste the OpenAI API key you created.
-3. Tap **Save key**. The key is encrypted using Android Keystore and is not built into the APK.
-4. Tap **Connect AI**.
-5. Allow microphone permission if Android asks.
-6. Wait for **AI READY 🎙️**.
-7. Talk normally in Arabic.
-8. Use **Test cute Arabic voice** if you want the robot to say a quick hello.
+There is no universal API-key format. A key only works with the provider/protocol it belongs to. Gemini and OpenAI use different WebSocket message formats, so v0.9 includes separate adapters for both. A completely different provider needs its own adapter unless it implements the OpenAI Realtime protocol.
 
-## Important security note
+## Use
 
-This is a private hobby/prototype build. It connects from the Android device using a standard API key entered at runtime. For a public/production app, replace this with a small secure backend that mints short-lived Realtime credentials and use WebRTC.
+Long-press the robot face → AI voice & personality → choose provider → paste key → Save provider → Connect AI.
 
-## Safe roaming
+For Gemini the endpoint is automatic. For OpenAI the standard endpoint is prefilled. For Custom, enter the provider's realtime WebSocket endpoint and model.
 
-The robot still has no real obstacle-distance sensor. Use Roam only on a clear floor and at low speed. Autonomous motion uses short pulses and auto-stop.
-
-## Build
-
-Upload the contents of this folder to the existing GitHub repository. GitHub Actions will build `MiRobotAI-v0.8.1-debug-apk`.
+The normal robot face never shows transcripts or secret keys.
