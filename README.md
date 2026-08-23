@@ -1,27 +1,20 @@
-# Mi Robot AI v0.3
+# Mi Robot AI v0.4 — Character Face + Mood
 
-This version fixes the BLE connection sequence by copying the original Mi Robot Builder Android app more closely.
+This version keeps the working Mi Robot BLE/motor control from v0.3 and adds the first real character layer.
 
-## What changed
+## What is new
+- Fullscreen landscape animated robot face
+- Automatic blinking
+- Happy / normal / curious / bored / upset / sleepy / surprised / talking expressions
+- Mood/attention system that slowly changes when the robot is ignored
+- Tap the face to give attention and cheer him up
+- Long-press the face to open the hidden robot-control panel
+- Emotion preview buttons in the hidden panel
+- Existing BLE connection + forward/back/left/right/stop remain available
+- No Android Text-to-Speech is used
 
-- Uses the original app's BLE handshake: `57 01 02 AA`.
-- Enables notifications on `6E400003...` before handshaking.
-- Writes commands to `6E400002...` using normal **Write With Response**, as the original app does.
-- Retries the handshake up to 3 times, roughly matching the original app's 150 ms retry behavior.
-- Only shows **ROBOT READY** after the handshake write succeeds.
-- Keeps the native 20-byte rocker command format and XOR byte used by the original app.
-- Adds TX/RX logging so we can diagnose the next problem without guessing.
+## Voice
+The intended voice path is natural speech-to-speech (audio in -> AI -> audio out), not Android TTS. A secure realtime voice connection needs a small backend that creates a short-lived client credential; never put a permanent API key in the APK.
 
-## First test
-
-Keep the wheels off the floor.
-
-1. Turn the Mi Robot controller on.
-2. Open Mi Robot AI v0.3.
-3. Tap **Scan for robot**.
-4. Tap the Mi Robot device.
-5. Wait for `4/4 ROBOT READY ✅`.
-6. Hold Forward briefly, then release.
-
-If it does not reach ROBOT READY, take a screenshot of the status/log area.
-If it reaches ROBOT READY but wheels do not move, take a screenshot of the TX log.
+## Build on GitHub
+Upload the contents of this folder to the same repository. GitHub Actions builds `MiRobotAI-v0.4-debug-apk`.

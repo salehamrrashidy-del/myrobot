@@ -1,1 +1,4 @@
-Upload/replace these project files in your existing GitHub repo. GitHub Actions will build the new app-debug.apk automatically.
+MiRobotAI v0.4
+Upload/replace these files in the same GitHub repository.
+Then open Actions and wait for Build Android APK to finish.
+Download artifact: MiRobotAI-v0.4-debug-apk
