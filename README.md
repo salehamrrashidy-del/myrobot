@@ -1,3 +1,7 @@
+Mi Robot AI v0.7.2
+
+Build compatibility fix for the v0.7 companion vision release.
+
 # MiRobotAI v0.7 — Companion Vision
 
 Keeps the working Mi Robot Builder BLE motor control and the LOOI-style face from v0.6.
@@ -20,3 +24,7 @@ This version detects and tracks faces but does not yet identify the owner. Relia
 
 ## Controls
 Long-press the face to open the hidden control panel.
+
+
+## v0.7.2 build fix
+Added `gradle.properties` with AndroidX enabled so CameraX and ML Kit dependencies build correctly in GitHub Actions.
