@@ -74,3 +74,7 @@ Artifact: `MiRobotAI-v1.0.0-debug-apk`
 - Added perception/emotion/behavior loop foundation.
 - Added safe action bridge between behavior and movement.
 - Prepared full companion decision flow.
+
+
+## v1.5.1 Build Fix
+- Fixed RobotActionBridge to use the existing MovementGate allowForward() method.

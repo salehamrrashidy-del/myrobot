@@ -2,6 +2,7 @@ package com.example.mirobotai;
 
 /**
  * Converts companion decisions into safe robot actions.
+ * Fixed v1.5.1: uses existing MovementGate API.
  */
 public class RobotActionBridge {
 
@@ -12,8 +13,10 @@ public class RobotActionBridge {
     }
 
     public boolean requestMove(String action) {
-        if (!gate.canMove()) {
-            return false;
+        if ("forward".equals(action)) {
+            if (!gate.allowForward()) {
+                return false;
+            }
         }
 
         // Motor commands should be sent through the existing BLE layer.
