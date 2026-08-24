@@ -45,3 +45,32 @@ Upload/replace this folder in the same GitHub repository, then run **Build Andro
 Artifact: `MiRobotAI-v1.0.0-debug-apk`
 
 > The bundled signing key is for this personal development build only. Replace it before publishing a production app.
+
+
+## v1.1 Companion Architecture
+- Added SafetyEngine between AI decisions and motors.
+- Added MotorStateManager for movement feedback.
+- Added BehaviorEngine for companion-style decisions.
+
+
+## v1.2 Integration step
+- Added CompanionBrain for mood-driven decisions.
+- Added MovementGate as final motor safety checkpoint.
+
+
+## MiRobotAI v1.3 Controller Integration
+- Added RobotControllerCoordinator.
+- Added MotorCommandQueue for movement command control.
+- Prepared behavior-to-safety-to-motor integration layer.
+
+
+## MiRobotAI v1.4 Companion Behavior
+- Added companion behavior decisions.
+- Added owner interaction cooldown.
+- Prepared mood-driven robot actions.
+
+
+## MiRobotAI v1.5 Real Companion Loop
+- Added perception/emotion/behavior loop foundation.
+- Added safe action bridge between behavior and movement.
+- Prepared full companion decision flow.
