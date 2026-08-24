@@ -45,7 +45,7 @@ import okio.ByteString;
  */
 public class RealtimeVoiceController {
     public enum Provider {
-        GEMINI("Gemini Live", "gemini", "gemini-3.1-flash-live-preview", ""),
+        GEMINI("Gemini Robotics 2", "gemini", "gemini-robotics-2", ""),
         OPENAI("OpenAI Realtime", "openai", "gpt-realtime-2.1-mini", "wss://api.openai.com/v1/realtime"),
         CUSTOM_OPENAI("Custom OpenAI-compatible", "custom", "", "");
 

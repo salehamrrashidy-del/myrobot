@@ -78,3 +78,8 @@ Artifact: `MiRobotAI-v1.0.0-debug-apk`
 
 ## v1.5.1 Build Fix
 - Fixed RobotActionBridge to use the existing MovementGate allowForward() method.
+
+
+## MiRobotAI v1.6 Gemini Robotics 2
+- Updated default Gemini model selection to Gemini Robotics 2.
+- Kept model configurable for API compatibility.
