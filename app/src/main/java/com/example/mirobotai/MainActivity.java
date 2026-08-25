@@ -10,6 +10,8 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.speech.tts.TextToSpeech;
+import android.speech.tts.UtteranceProgressListener;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.Window;
@@ -31,6 +33,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Locale;
 
 import org.json.JSONObject;
 
@@ -76,6 +79,8 @@ public class MainActivity extends ComponentActivity implements
     private Spinner voiceSpinner;
     private Button aiConnectButton;
     private RealtimeVoiceController ai;
+    private TextToSpeech localTts;
+    private boolean localTtsReady = false;
     private ApiKeyStore apiKeyStore;
     private SharedPreferences aiPrefs;
     private long lastFocusAiPromptMs = 0L;
@@ -131,6 +136,7 @@ public class MainActivity extends ComponentActivity implements
         apiKeyStore = new ApiKeyStore(this);
         aiPrefs = getSharedPreferences("mirobot_ai_provider", MODE_PRIVATE);
         ai = new RealtimeVoiceController(this, this);
+        initLocalTts();
         setupVoiceUi();
         setupProviderUi();
 
@@ -543,6 +549,10 @@ public class MainActivity extends ComponentActivity implements
         if (vision != null) vision.close();
         if (moodEngine != null) moodEngine.stop();
         if (ai != null) ai.disconnect();
+        if (localTts != null) {
+            try { localTts.stop(); } catch (Exception ignored) { }
+            try { localTts.shutdown(); } catch (Exception ignored) { }
+        }
         stopRobotInternal();
         if (ble != null) ble.close();
         super.onDestroy();
@@ -551,6 +561,57 @@ public class MainActivity extends ComponentActivity implements
     @Override public void onWindowFocusChanged(boolean hasFocus) {
         super.onWindowFocusChanged(hasFocus);
         if (hasFocus) immersive();
+    }
+
+    private void initLocalTts() {
+        localTts = new TextToSpeech(this, status -> {
+            if (status != TextToSpeech.SUCCESS || localTts == null) {
+                localTtsReady = false;
+                return;
+            }
+            int lang = localTts.setLanguage(new Locale("ar", "EG"));
+            localTts.setSpeechRate(0.96f);
+            localTts.setPitch(1.08f);
+            localTtsReady = lang != TextToSpeech.LANG_MISSING_DATA
+                    && lang != TextToSpeech.LANG_NOT_SUPPORTED;
+            localTts.setOnUtteranceProgressListener(new UtteranceProgressListener() {
+                @Override public void onStart(String utteranceId) {
+                    if (ai != null) ai.setExternalSpeechActive(true);
+                    runOnUiThread(() -> {
+                        if (companion != null) companion.pauseFor(5000L);
+                        if (faceView != null) {
+                            faceView.setEmotion(Emotion.TALKING);
+                            faceView.setTalking(true);
+                        }
+                    });
+                }
+
+                @Override public void onDone(String utteranceId) {
+                    if (ai != null) ai.setExternalSpeechActive(false);
+                    runOnUiThread(() -> {
+                        if (faceView != null) {
+                            faceView.setTalking(false);
+                            if (moodEngine != null) faceView.setEmotion(moodEngine.currentEmotion());
+                        }
+                    });
+                }
+
+                @Override public void onError(String utteranceId) {
+                    if (ai != null) ai.setExternalSpeechActive(false);
+                    runOnUiThread(() -> {
+                        if (faceView != null) {
+                            faceView.setTalking(false);
+                            if (moodEngine != null) faceView.setEmotion(moodEngine.currentEmotion());
+                        }
+                    });
+                }
+            });
+        });
+    }
+
+    private void speakRoboticsText(String text) {
+        if (text == null || text.trim().isEmpty() || localTts == null || !localTtsReady) return;
+        localTts.speak(text.trim(), TextToSpeech.QUEUE_FLUSH, null, "mirobot-robotics-reply");
     }
 
     private void setupVoiceUi() {
@@ -613,8 +674,13 @@ public class MainActivity extends ComponentActivity implements
         String model = aiPrefs.getString(provider.slot + "_model", provider.defaultModel);
         if (provider == RealtimeVoiceController.Provider.GEMINI) {
             String m = model == null ? "" : model.toLowerCase();
-            boolean liveCapable = m.contains("live") || m.contains("native-audio");
-            if (!liveCapable || "gemini-2.5-flash-native-audio-preview-12-2025".equals(model)) {
+            boolean liveCapable = m.contains("live")
+                    || m.contains("native-audio")
+                    || m.contains("gemini-robotics-er-2-streaming");
+            boolean oldOrFakeRoboticsId = "gemini-robotics-2".equalsIgnoreCase(model)
+                    || "gemini-2.0-flash-live-001".equalsIgnoreCase(model)
+                    || "gemini-2.5-flash-native-audio-preview-12-2025".equalsIgnoreCase(model);
+            if (!liveCapable || oldOrFakeRoboticsId) {
                 model = provider.defaultModel;
                 aiPrefs.edit().putString(provider.slot + "_model", model).apply();
             }
@@ -665,8 +731,9 @@ public class MainActivity extends ComponentActivity implements
                 "Use light emotion naturally, without theatrical laughs, dramatic sighs, or overacting. " +
                 "Never guilt the user for leaving you alone and never act emotionally dependent. " +
                 "You are physically a small wheeled robot in the room. Do not claim you moved unless the app actually moved you. " +
-                "You have robot action tools. When the user asks you to turn, stop, roam, face them, or make a small safe movement, use the appropriate tool instead of only talking about it. " +
-                "Never invent raw motor values or long drives. Local Edge Guard safety is absolute: if a movement tool is refused, accept that and do not retry aggressively. " +
+                "You have robot action tools. For direct physical commands such as move forward, go back, turn left, turn right, or stop — including equivalent Egyptian Arabic phrases — call robot_move with the matching direction instead of only talking about it. " +
+                "Use set_roam_mode and set_companion_mode for those modes. Never invent raw motor values or long drives. " +
+                "Local Edge Guard safety is absolute: if a movement tool is refused, accept that and do not retry aggressively. " +
                 "Current hidden personality meters (do not read these numbers aloud): happiness=" + happy +
                 ", curiosity=" + curious + ", boredom=" + bored + ". " +
                 "Let these meters gently influence your tone. If curiosity is high, ask a small question. " +
@@ -681,7 +748,9 @@ public class MainActivity extends ComponentActivity implements
     @Override public void onAiConnected() {
         runOnUiThread(() -> {
             aiConnectButton.setText("Disconnect AI");
-            aiStatusText.setText("AI READY 🎙️ — talk normally");
+            aiStatusText.setText(ai != null && ai.isRoboticsMode()
+                    ? "Gemini Robotics ER 2 READY 🤖🎙️ — voice commands control robot tools"
+                    : "AI READY 🎙️ — talk normally");
             temporaryEmotion(Emotion.EXCITED, 1000L);
         });
     }
@@ -726,9 +795,12 @@ public class MainActivity extends ComponentActivity implements
 
     @Override public void onAssistantTranscript(String transcript) {
         runOnUiThread(() -> {
-            // Transcript stays only in the hidden debug panel; normal face remains text-free.
             if (transcript != null && !transcript.trim().isEmpty()) {
-                aiStatusText.setText("AI: " + transcript.trim());
+                String clean = transcript.trim();
+                aiStatusText.setText("AI: " + clean);
+                // Robotics ER 2 Streaming returns TEXT. Speak that text locally so
+                // the companion still has a voice without changing the robotics model.
+                if (ai != null && ai.isRoboticsMode()) speakRoboticsText(clean);
             }
         });
     }
@@ -741,6 +813,10 @@ public class MainActivity extends ComponentActivity implements
             String result = "unknown robot action";
             try {
                 switch (toolName) {
+                    case "robot_move":
+                        executeRobotMoveTool(id, toolName, toolArgs);
+                        return;
+
                     case "robot_stop":
                         companion.pauseFor(1200L);
                         stopRobot();
@@ -822,6 +898,106 @@ public class MainActivity extends ComponentActivity implements
             }
             if (ai != null) ai.sendRobotToolResult(id, toolName, ok, result);
         });
+    }
+
+    private void executeRobotMoveTool(String id, String toolName, JSONObject args) {
+        String dir = args == null ? "" : args.optString("direction", "").trim().toLowerCase();
+
+        if ("stop".equals(dir)) {
+            companion.pauseFor(1200L);
+            stopRobot();
+            statusText.setText("AI MOVE: STOP → BLE stop packet");
+            aiStatusText.setText("Robotics tool: robot_move(stop) → stopRobot() → BLE 128/128");
+            if (ai != null) ai.sendRobotToolResult(id, toolName, true, "robot stopped");
+            return;
+        }
+
+        if (!robotReady()) {
+            aiStatusText.setText("Robotics tool blocked: robot is not connected");
+            if (ai != null) ai.sendRobotToolResult(id, toolName, false, "robot is not connected");
+            return;
+        }
+
+        int forward = 0;
+        int turn = 0;
+        int delta = 9;
+        long durationMs = 150L;
+        String result;
+
+        switch (dir) {
+            case "forward":
+                if (!forwardSafe()) {
+                    stopRobotInternal();
+                    statusText.setText("AI MOVE: FORWARD blocked by Edge Guard ⚠️");
+                    aiStatusText.setText("robot_move(forward) → Safety BLOCK → BLE STOP");
+                    if (ai != null) ai.sendRobotToolResult(
+                            id, toolName, false,
+                            "blocked by Edge Guard: possible table edge ahead");
+                    return;
+                }
+                forward = +1;
+                result = "small forward movement completed";
+                break;
+
+            case "backward":
+                // The phone's front camera cannot see a rear cliff. Refuse reverse
+                // while Edge Guard is active instead of pretending it is safe.
+                if (edgeGuardToggle != null && edgeGuardToggle.isChecked()) {
+                    stopRobotInternal();
+                    statusText.setText("AI MOVE: BACKWARD blocked — rear edge not visible ⚠️");
+                    aiStatusText.setText("robot_move(backward) → Safety BLOCK (rear cliff unseen) → BLE STOP");
+                    if (ai != null) ai.sendRobotToolResult(
+                            id, toolName, false,
+                            "backward blocked while Edge Guard is on because the rear edge is not visible");
+                    return;
+                }
+                forward = -1;
+                delta = 8;
+                durationMs = 130L;
+                result = "small backward movement completed";
+                break;
+
+            case "left":
+                turn = -1;
+                delta = 11;
+                durationMs = 190L;
+                result = "small left turn completed";
+                break;
+
+            case "right":
+                turn = +1;
+                delta = 11;
+                durationMs = 190L;
+                result = "small right turn completed";
+                break;
+
+            default:
+                if (ai != null) ai.sendRobotToolResult(
+                        id, toolName, false,
+                        "direction must be forward, backward, left, right, or stop");
+                return;
+        }
+
+        companion.pauseFor(durationMs + 650L);
+        String motorPreview = previewMotorAxes(forward, turn, delta);
+        statusText.setText("AI MOVE: " + dir.toUpperCase() + " → " + motorPreview);
+        aiStatusText.setText("robot_move(" + dir + ") → Safety OK → autoPulse → sendMove → BLE " + motorPreview);
+        autoPulse(forward, turn, delta, durationMs);
+
+        final String doneResult = result;
+        handler.postDelayed(() -> {
+            if (ai != null) ai.sendRobotToolResult(id, toolName, true, doneResult);
+        }, durationMs + 90L);
+    }
+
+    private String previewMotorAxes(int forward, int turn, int delta) {
+        int leftDelta = (forward * delta) + (turn * delta);
+        int rightDelta = (forward * delta) - (turn * delta);
+        if (invertLeft != null && invertLeft.isChecked()) leftDelta = -leftDelta;
+        if (invertRight != null && invertRight.isChecked()) rightDelta = -rightDelta;
+        int left = clamp(MiRobotProtocol.NEUTRAL + leftDelta, 0, 255);
+        int right = clamp(MiRobotProtocol.NEUTRAL + rightDelta, 0, 255);
+        return "axisA=" + left + ", axisB=" + right;
     }
 
     private static int clamp(int v, int min, int max) {

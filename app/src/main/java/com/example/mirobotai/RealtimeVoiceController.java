@@ -45,7 +45,7 @@ import okio.ByteString;
  */
 public class RealtimeVoiceController {
     public enum Provider {
-        GEMINI("Gemini Robotics 2", "gemini", "gemini-robotics-2", ""),
+        GEMINI("Gemini Robotics ER 2", "gemini", "gemini-robotics-er-2-streaming-preview", ""),
         OPENAI("OpenAI Realtime", "openai", "gpt-realtime-2.1-mini", "wss://api.openai.com/v1/realtime"),
         CUSTOM_OPENAI("Custom OpenAI-compatible", "custom", "", "");
 
@@ -101,6 +101,7 @@ public class RealtimeVoiceController {
     private volatile boolean geminiInputPausedForAssistant = false;
     private final StringBuilder transcript = new StringBuilder();
     private volatile boolean assistantSpeaking = false;
+    private volatile boolean externalSpeechActive = false;
     private Provider provider = Provider.GEMINI;
     private String model = Provider.GEMINI.defaultModel;
     private String customEndpoint = "";
@@ -135,6 +136,12 @@ public class RealtimeVoiceController {
 
     public boolean isConnected() { return sessionReady; }
     public Provider getProvider() { return provider; }
+
+    /** Used when Robotics ER text output is spoken by the app's local TTS. */
+    public void setExternalSpeechActive(boolean active) {
+        externalSpeechActive = active;
+        if (!active) suppressMicUntilMs = Math.max(suppressMicUntilMs, System.currentTimeMillis() + 700L);
+    }
 
     public void connect(Provider provider, String apiKey, String endpoint, String model, String voiceName, String instructions) {
         manualDisconnect = true;
@@ -174,7 +181,7 @@ public class RealtimeVoiceController {
                 if (RealtimeVoiceController.this.provider == Provider.GEMINI) {
                     configureGeminiSession(lastInstructions);
                     // Gemini signals setupComplete before we show READY/start the mic.
-                    status("Gemini connected — waiting for setupComplete (max 30s)…");
+                    status((isRoboticsMode() ? "Gemini Robotics ER 2" : "Gemini") + " connected — waiting for setupComplete (max 30s)…");
                     retryHandler.removeCallbacks(geminiSetupTimeout);
                     retryHandler.postDelayed(geminiSetupTimeout, 30_000L);
                 } else {
@@ -239,7 +246,7 @@ public class RealtimeVoiceController {
                 connected = true;
                 sessionReady = false;
                 configureGeminiSession(lastInstructions);
-                status("Gemini connected — waiting for setupComplete (max 30s)…");
+                status((isRoboticsMode() ? "Gemini Robotics ER 2" : "Gemini") + " connected — waiting for setupComplete (max 30s)…");
                 retryHandler.removeCallbacks(geminiSetupTimeout);
                 retryHandler.postDelayed(geminiSetupTimeout, 30_000L);
             }
@@ -273,7 +280,14 @@ public class RealtimeVoiceController {
     private static boolean isGeminiLiveModel(String model) {
         if (model == null) return false;
         String m = model.trim().toLowerCase();
-        return m.contains("live") || m.contains("native-audio");
+        return m.contains("live")
+                || m.contains("native-audio")
+                || m.contains("gemini-robotics-er-2-streaming");
+    }
+
+    public boolean isRoboticsMode() {
+        String m = model == null ? "" : model.trim().toLowerCase();
+        return provider == Provider.GEMINI && m.contains("gemini-robotics-er-2-streaming");
     }
 
     private Request buildRequest(String apiKey) {
@@ -466,24 +480,24 @@ public class RealtimeVoiceController {
             JSONObject setup = new JSONObject();
             setup.put("model", "models/" + model);
 
-            // IMPORTANT: The Google GenAI SDK serializes LiveConnectConfig
-            // responseModalities under setup.generationConfig. Sending it there
-            // matches the canonical BidiGenerateContentSetup wire schema.
+            // Gemini Robotics ER 2 Streaming officially returns TEXT through the Live API.
+            // Other Gemini Live models may return AUDIO.
+            boolean roboticsStreaming = isRoboticsMode();
             JSONArray modalities = new JSONArray();
-            modalities.put("AUDIO");
+            modalities.put(roboticsStreaming ? "TEXT" : "AUDIO");
             JSONObject generationConfig = new JSONObject();
             generationConfig.put("responseModalities", modalities);
 
-            // Pick a calmer, friendlier prebuilt voice and persist the user's
-            // selection in MainActivity. Native-audio Live models support these
-            // prebuilt voice names through speechConfig.
-            JSONObject prebuiltVoice = new JSONObject();
-            prebuiltVoice.put("voiceName", voiceName);
-            JSONObject voiceConfig = new JSONObject();
-            voiceConfig.put("prebuiltVoiceConfig", prebuiltVoice);
-            JSONObject speechConfig = new JSONObject();
-            speechConfig.put("voiceConfig", voiceConfig);
-            generationConfig.put("speechConfig", speechConfig);
+            if (!roboticsStreaming) {
+                // Native-audio Gemini Live models can use Google's prebuilt voices.
+                JSONObject prebuiltVoice = new JSONObject();
+                prebuiltVoice.put("voiceName", voiceName);
+                JSONObject voiceConfig = new JSONObject();
+                voiceConfig.put("prebuiltVoiceConfig", prebuiltVoice);
+                JSONObject speechConfig = new JSONObject();
+                speechConfig.put("voiceConfig", voiceConfig);
+                generationConfig.put("speechConfig", speechConfig);
+            }
 
             setup.put("generationConfig", generationConfig);
 
@@ -504,10 +518,19 @@ public class RealtimeVoiceController {
             realtimeInputConfig.put("activityHandling", "NO_INTERRUPTION");
             setup.put("realtimeInputConfig", realtimeInputConfig);
 
-            // Give Gemini a small, bounded set of real robot actions. Safety is
-            // still enforced locally by MainActivity/CompanionController, so the
-            // model cannot bypass edge protection or send raw motor values.
+            // Physical capabilities are exposed as BLOCKING tools, which is the
+            // Robotics ER 2 streaming pattern. The app still owns motor values and safety.
             JSONArray declarations = new JSONArray();
+
+            JSONObject moveProps = new JSONObject();
+            moveProps.put("direction", enumStringSchema("forward", "backward", "left", "right", "stop"));
+            declarations.put(functionDecl(
+                    "robot_move",
+                    "Move the physical robot a small bounded amount. forward/backward are short nudges; left/right are small in-place turns; stop stops immediately. " +
+                            "Forward can be refused by Edge Guard. Backward is refused while Edge Guard is enabled because the rear edge is not visible.",
+                    objectSchema(moveProps, "direction")));
+
+            // Legacy tools are kept so older prompts/sessions still work.
             declarations.put(functionDecl(
                     "robot_stop",
                     "Immediately stop the physical robot.",
@@ -517,14 +540,14 @@ public class RealtimeVoiceController {
             turnProps.put("direction", enumStringSchema("left", "right"));
             declarations.put(functionDecl(
                     "robot_turn",
-                    "Turn the physical robot a small amount left or right. Use only when the user asks or it is clearly useful.",
+                    "Legacy small left/right turn tool. Prefer robot_move.",
                     objectSchema(turnProps, "direction")));
 
             JSONObject nudgeProps = new JSONObject();
             nudgeProps.put("direction", enumStringSchema("forward"));
             declarations.put(functionDecl(
                     "robot_nudge",
-                    "Move the robot forward only a very short safe nudge. The app may refuse if the camera edge guard sees danger.",
+                    "Legacy short forward nudge tool. Prefer robot_move.",
                     objectSchema(nudgeProps, "direction")));
 
             JSONObject enabledProps = new JSONObject();
@@ -662,7 +685,7 @@ public class RealtimeVoiceController {
                     if (read > 0 && socket != null) {
                         long nowMs = System.currentTimeMillis();
                         boolean suppressForSpeaker = provider == Provider.GEMINI
-                                && (assistantSpeaking || nowMs < suppressMicUntilMs);
+                                && (assistantSpeaking || externalSpeechActive || nowMs < suppressMicUntilMs);
                         if (suppressForSpeaker) {
                             // Keep reading from AudioRecord so its buffer stays healthy,
                             // but do not upload the robot's own speaker audio to Gemini.
@@ -899,7 +922,7 @@ public class RealtimeVoiceController {
                 retryHandler.removeCallbacks(geminiSetupTimeout);
                 geminiRetryCount = 0;
                 sessionReady = true;
-                status("Gemini Live READY 🎙️");
+                status(isRoboticsMode() ? "Gemini Robotics ER 2 READY 🤖🎙️" : "Gemini Live READY 🎙️");
                 startMicrophone();
                 if (listener != null) listener.onAiConnected();
                 return;
