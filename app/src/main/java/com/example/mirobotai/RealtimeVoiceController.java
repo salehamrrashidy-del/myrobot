@@ -9,6 +9,8 @@ import android.media.AudioFormat;
 import android.media.AudioRecord;
 import android.media.AudioTrack;
 import android.media.MediaRecorder;
+import android.media.audiofx.AcousticEchoCanceler;
+import android.media.audiofx.NoiseSuppressor;
 import android.net.Uri;
 import android.util.Base64;
 
@@ -45,7 +47,7 @@ import okio.ByteString;
  */
 public class RealtimeVoiceController {
     public enum Provider {
-        GEMINI("Gemini Robotics ER 2", "gemini", "gemini-robotics-er-2-streaming-preview", ""),
+        GEMINI("Gemini 3.1 Flash Live", "gemini", "gemini-3.1-flash-live-preview", ""),
         OPENAI("OpenAI Realtime", "openai", "gpt-realtime-2.1-mini", "wss://api.openai.com/v1/realtime"),
         CUSTOM_OPENAI("Custom OpenAI-compatible", "custom", "", "");
 
@@ -91,6 +93,9 @@ public class RealtimeVoiceController {
     private volatile boolean recording = false;
     private AudioRecord audioRecord;
     private AudioTrack audioTrack;
+    private AcousticEchoCanceler acousticEchoCanceler;
+    private NoiseSuppressor noiseSuppressor;
+    private volatile boolean echoCancellationActive = false;
     private Thread recordThread;
     private final Object audioLock = new Object();
     private final BlockingQueue<byte[]> playbackQueue = new LinkedBlockingQueue<>();
@@ -166,6 +171,12 @@ public class RealtimeVoiceController {
         }
 
         status(this.provider.label + " connecting…");
+
+        if (this.provider == Provider.GEMINI && isRoboticsMode()) {
+            requestEphemeralLiveTokenAndOpen(apiKey.trim());
+            return;
+        }
+
         Request request;
         try {
             request = buildRequest(apiKey.trim());
@@ -174,6 +185,11 @@ public class RealtimeVoiceController {
             return;
         }
 
+        openSocket(request);
+    }
+
+
+    private void openSocket(Request request) {
         socket = client.newWebSocket(request, new WebSocketListener() {
             @Override public void onOpen(WebSocket webSocket, Response response) {
                 connected = true;
@@ -252,57 +268,14 @@ public class RealtimeVoiceController {
 
     private void reconnectGemini() {
         if (manualDisconnect || reconnectApiKey == null || reconnectApiKey.isEmpty()) return;
+        if (isRoboticsMode()) {
+            requestEphemeralLiveTokenAndOpen(reconnectApiKey);
+            return;
+        }
         Request request;
         try { request = buildRequest(reconnectApiKey); }
         catch (Exception e) { status("Gemini retry config error: " + e.getMessage()); return; }
-        socket = client.newWebSocket(request, new WebSocketListener() {
-            @Override public void onOpen(WebSocket webSocket, Response response) {
-                connected = true;
-                sessionReady = false;
-                configureGeminiSession(lastInstructions);
-                status((isRoboticsMode() ? "Gemini Robotics ER 2" : "Gemini") + " connected — waiting for setupComplete (max 30s)…");
-                retryHandler.removeCallbacks(geminiSetupTimeout);
-                retryHandler.postDelayed(geminiSetupTimeout, 30_000L);
-            }
-            @Override public void onMessage(WebSocket webSocket, String text) { handleGeminiEvent(text); }
-            @Override public void onMessage(WebSocket webSocket, ByteString bytes) {
-                handleGeminiEvent(bytes == null ? "" : bytes.utf8());
-            }
-            @Override public void onClosing(WebSocket webSocket, int code, String reason) { webSocket.close(code, reason); }
-            @Override public void onClosed(WebSocket webSocket, int code, String reason) {
-                if (webSocket != socket) return;
-                connected = false;
-                sessionReady = false;
-                stopMicrophone();
-                stopPlayback();
-                if (code == 1008 && isRoboticsMode()) {
-                    String r = reason == null ? "" : reason;
-                    if (r.toLowerCase().contains("authentication") || r.toLowerCase().contains("oauth")) {
-                        status("Gemini Robotics disconnected (1008): authentication rejected. "
-                                + "Check the saved Gemini key, then tap TEST KEY. "
-                                + (r.isEmpty() ? "" : "Server: " + r));
-                    } else {
-                        status("Gemini Robotics disconnected (1008)"
-                                + (r.isEmpty() ? "" : ": " + r)
-                                + " — setup/access rejected by the Live API");
-                    }
-                } else {
-                    status("AI disconnected (" + code + ")"
-                            + (reason == null || reason.isEmpty() ? "" : ": " + reason));
-                }
-                if (listener != null) listener.onAiDisconnected();
-            }
-            @Override public void onFailure(WebSocket webSocket, Throwable t, Response response) {
-                if (webSocket != socket) return;
-                connected = false;
-                sessionReady = false;
-                stopMicrophone();
-                stopPlayback();
-                String msg = t == null ? "unknown error" : t.getMessage();
-                status("AI connection error: " + msg);
-                if (listener != null) listener.onAiDisconnected();
-            }
-        });
+        openSocket(request);
     }
 
     private static boolean isGeminiLiveModel(String model) {
@@ -316,6 +289,96 @@ public class RealtimeVoiceController {
     public boolean isRoboticsMode() {
         String m = model == null ? "" : model.trim().toLowerCase();
         return provider == Provider.GEMINI && m.contains("gemini-robotics-er-2-streaming");
+    }
+
+
+    /**
+     * Provisions a short-lived token for the Gemini Live API, then uses that
+     * token to authenticate the Robotics WebSocket. This is Google's documented
+     * client-to-server Live API flow for mobile/web clients.
+     */
+    private void requestEphemeralLiveTokenAndOpen(String apiKey) {
+        final String cleanKey = apiKey == null ? "" : apiKey.trim();
+        if (cleanKey.isEmpty()) {
+            status("Gemini API key is empty");
+            return;
+        }
+
+        status("Gemini Robotics: creating secure Live token…");
+
+        JSONObject bodyJson = new JSONObject();
+        try { bodyJson.put("uses", 1); } catch (JSONException ignored) { }
+
+        okhttp3.RequestBody body = okhttp3.RequestBody.create(
+                bodyJson.toString(),
+                okhttp3.MediaType.parse("application/json; charset=utf-8"));
+
+        Request tokenRequest = new Request.Builder()
+                .url("https://generativelanguage.googleapis.com/v1beta/auth_tokens")
+                .addHeader("x-goog-api-key", cleanKey)
+                .addHeader("Content-Type", "application/json")
+                .post(body)
+                .build();
+
+        client.newCall(tokenRequest).enqueue(new Callback() {
+            @Override public void onFailure(Call call, IOException e) {
+                status("Gemini Robotics token error: "
+                        + (e == null || e.getMessage() == null ? "network error" : e.getMessage()));
+                if (listener != null) listener.onAiDisconnected();
+            }
+
+            @Override public void onResponse(Call call, Response response) throws IOException {
+                String responseText = "";
+                try { if (response.body() != null) responseText = response.body().string(); }
+                catch (Exception ignored) { }
+
+                if (!response.isSuccessful()) {
+                    String detail = responseText == null ? "" : responseText.trim();
+                    if (detail.length() > 260) detail = detail.substring(0, 260);
+                    status("Gemini Robotics token rejected: HTTP " + response.code()
+                            + (detail.isEmpty() ? "" : " — " + detail));
+                    if (listener != null) listener.onAiDisconnected();
+                    response.close();
+                    return;
+                }
+
+                String tokenName = "";
+                try {
+                    JSONObject tokenJson = new JSONObject(responseText);
+                    tokenName = tokenJson.optString("name", "").trim();
+                } catch (Exception ignored) { }
+                response.close();
+
+                if (tokenName.isEmpty()) {
+                    status("Gemini Robotics token error: server returned no token name");
+                    if (listener != null) listener.onAiDisconnected();
+                    return;
+                }
+
+                try {
+                    Request request = buildGeminiRequestWithEphemeralToken(tokenName);
+                    status("Gemini Robotics secure Live token ready — opening socket…");
+                    openSocket(request);
+                } catch (Exception e) {
+                    status("Gemini Robotics socket config error: " + e.getMessage());
+                    if (listener != null) listener.onAiDisconnected();
+                }
+            }
+        });
+    }
+
+    private Request buildGeminiRequestWithEphemeralToken(String tokenName) {
+        String cleanToken = tokenName == null ? "" : tokenName.trim();
+        if (cleanToken.isEmpty()) throw new IllegalArgumentException("Live token is empty");
+
+        String url = "wss://generativelanguage.googleapis.com/ws/"
+                + "google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
+                + "?access_token=" + Uri.encode(cleanToken);
+
+        return new Request.Builder()
+                .url(url)
+                .addHeader("x-goog-api-client", "mirobotai-android/1.7.3")
+                .build();
     }
 
     private Request buildRequest(String apiKey) {
@@ -569,7 +632,7 @@ public class RealtimeVoiceController {
 
                 JSONObject realtimeInputConfig = new JSONObject();
                 realtimeInputConfig.put("automaticActivityDetection", automaticActivityDetection);
-                realtimeInputConfig.put("activityHandling", "NO_INTERRUPTION");
+                realtimeInputConfig.put("activityHandling", "START_OF_ACTIVITY_INTERRUPTS");
                 setup.put("realtimeInputConfig", realtimeInputConfig);
             }
 
@@ -722,7 +785,7 @@ public class RealtimeVoiceController {
         int bufferSize = Math.max(min * 2, sampleRate / 5);
         try {
             audioRecord = new AudioRecord(
-                    MediaRecorder.AudioSource.VOICE_RECOGNITION,
+                    MediaRecorder.AudioSource.VOICE_COMMUNICATION,
                     sampleRate,
                     AudioFormat.CHANNEL_IN_MONO,
                     AudioFormat.ENCODING_PCM_16BIT,
@@ -731,6 +794,26 @@ public class RealtimeVoiceController {
                 status("Microphone could not start");
                 return;
             }
+
+            // Allow real user barge-in while the robot is speaking.
+            // AEC helps remove the phone speaker from the microphone signal.
+            try {
+                int sessionId = audioRecord.getAudioSessionId();
+                if (AcousticEchoCanceler.isAvailable()) {
+                    acousticEchoCanceler = AcousticEchoCanceler.create(sessionId);
+                    if (acousticEchoCanceler != null) {
+                        acousticEchoCanceler.setEnabled(true);
+                        echoCancellationActive = acousticEchoCanceler.getEnabled();
+                    }
+                }
+                if (NoiseSuppressor.isAvailable()) {
+                    noiseSuppressor = NoiseSuppressor.create(sessionId);
+                    if (noiseSuppressor != null) noiseSuppressor.setEnabled(true);
+                }
+            } catch (Exception ignored) {
+                echoCancellationActive = false;
+            }
+
             audioRecord.startRecording();
             recording = true;
             final int chunkSize = Math.max(3200, sampleRate / 5); // about 100ms PCM16-ish chunk
@@ -742,16 +825,19 @@ public class RealtimeVoiceController {
                     catch (Exception e) { break; }
                     if (read > 0 && socket != null) {
                         long nowMs = System.currentTimeMillis();
+                        // For Gemini 3.1 Flash Live we keep sending microphone audio
+                        // while the assistant is speaking so the user can interrupt it.
+                        // Only local TTS / a very short echo tail can temporarily mute input.
                         boolean suppressForSpeaker = provider == Provider.GEMINI
-                                && (assistantSpeaking || externalSpeechActive || nowMs < suppressMicUntilMs);
-                        if (suppressForSpeaker) {
-                            // Keep reading from AudioRecord so its buffer stays healthy,
-                            // but do not upload the robot's own speaker audio to Gemini.
-                            continue;
-                        }
+                                && (externalSpeechActive || nowMs < suppressMicUntilMs);
+
                         if (provider == Provider.GEMINI) {
                             geminiInputPausedForAssistant = false;
                             updateLocalVad(buffer, read);
+                        }
+
+                        if (suppressForSpeaker) {
+                            continue;
                         }
                         String b64 = Base64.encodeToString(buffer, 0, read, Base64.NO_WRAP);
                         if (provider == Provider.GEMINI) {
@@ -789,10 +875,29 @@ public class RealtimeVoiceController {
         }
         int avg = samples == 0 ? 0 : (int) (sum / samples);
         long now = System.currentTimeMillis();
-        if (avg > 900) {
+        // While the assistant is speaking, require a stronger local signal.
+        // AEC normally removes most speaker echo, so a strong remaining signal
+        // is much more likely to be the user talking over the robot.
+        int speechThreshold = assistantSpeaking
+                ? (echoCancellationActive ? 1500 : 2600)
+                : 900;
+
+        if (avg > speechThreshold) {
             lastLoudMs = now;
             if (!localSpeech) {
                 localSpeech = true;
+
+                // Immediate local barge-in: stop whatever audio is still queued.
+                // Gemini also receives the microphone audio and will send an
+                // `interrupted` server event for the current response.
+                if (assistantSpeaking || queuedPlaybackBytes.get() > 0L) {
+                    flushPlayback();
+                    assistantSpeaking = false;
+                    transcript.setLength(0);
+                    suppressMicUntilMs = 0L;
+                    if (listener != null) listener.onAssistantAudioDone();
+                }
+
                 if (listener != null) listener.onUserSpeechStarted();
             }
         } else if (localSpeech && now - lastLoudMs > 700L) {
@@ -806,6 +911,16 @@ public class RealtimeVoiceController {
         localSpeech = false;
         AudioRecord record = audioRecord;
         audioRecord = null;
+        if (acousticEchoCanceler != null) {
+            try { acousticEchoCanceler.release(); } catch (Exception ignored) { }
+            acousticEchoCanceler = null;
+        }
+        if (noiseSuppressor != null) {
+            try { noiseSuppressor.release(); } catch (Exception ignored) { }
+            noiseSuppressor = null;
+        }
+        echoCancellationActive = false;
+
         if (record != null) {
             try { record.stop(); } catch (Exception ignored) { }
             try { record.release(); } catch (Exception ignored) { }
@@ -870,7 +985,8 @@ public class RealtimeVoiceController {
 
     private void playChunk(byte[] pcm) {
         if (pcm == null || pcm.length == 0) return;
-        if (provider == Provider.GEMINI) pauseGeminiMicForAssistant();
+        // Keep microphone streaming during Gemini audio so real user speech can
+        // interrupt the response (barge-in).
         ensurePlaybackWorker();
         byte[] copy = java.util.Arrays.copyOf(pcm, pcm.length);
         queuedPlaybackBytes.addAndGet(copy.length);
@@ -1066,12 +1182,11 @@ public class RealtimeVoiceController {
     private void finishAssistantAudio() {
         if (assistantSpeaking && listener != null) listener.onAssistantAudioDone();
         if (provider == Provider.GEMINI) {
-            long queued = Math.max(0L, queuedPlaybackBytes.get());
-            long queuedMs = (queued * 1000L) / (OUTPUT_RATE * 2L); // mono PCM16
-            // Keep the mic upload muted until queued speaker audio has played, plus
-            // a short tail so the phone does not feed its own echo back as a new turn.
-            suppressMicUntilMs = Math.max(suppressMicUntilMs,
-                    System.currentTimeMillis() + Math.max(900L, queuedMs + 900L));
+            // Keep only a tiny speaker tail. Long microphone muting would prevent
+            // the user from naturally interrupting / continuing the conversation.
+            suppressMicUntilMs = Math.max(
+                    suppressMicUntilMs,
+                    System.currentTimeMillis() + (echoCancellationActive ? 120L : 280L));
         }
         assistantSpeaking = false;
         transcript.setLength(0);

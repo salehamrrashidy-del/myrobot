@@ -1,4 +1,4 @@
-MiRobotAI v1.0.0
+MiRobotAI v1.7.0
 Upload/replace these files in the same GitHub repository.
 Then open Actions and wait for Build Android APK to finish.
-Download artifact: MiRobotAI-v1.0.0-debug-apk
+Download artifact: MiRobotAI-v1.7.0-debug-apk

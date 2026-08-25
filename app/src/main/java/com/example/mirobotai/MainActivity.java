@@ -679,7 +679,8 @@ public class MainActivity extends ComponentActivity implements
                     || m.contains("gemini-robotics-er-2-streaming");
             boolean oldOrFakeRoboticsId = "gemini-robotics-2".equalsIgnoreCase(model)
                     || "gemini-2.0-flash-live-001".equalsIgnoreCase(model)
-                    || "gemini-2.5-flash-native-audio-preview-12-2025".equalsIgnoreCase(model);
+                    || "gemini-2.5-flash-native-audio-preview-12-2025".equalsIgnoreCase(model)
+                    || "gemini-robotics-er-2-streaming-preview".equalsIgnoreCase(model);
             if (!liveCapable || oldOrFakeRoboticsId) {
                 model = provider.defaultModel;
                 aiPrefs.edit().putString(provider.slot + "_model", model).apply();
@@ -748,9 +749,7 @@ public class MainActivity extends ComponentActivity implements
     @Override public void onAiConnected() {
         runOnUiThread(() -> {
             aiConnectButton.setText("Disconnect AI");
-            aiStatusText.setText(ai != null && ai.isRoboticsMode()
-                    ? "Gemini Robotics ER 2 READY 🤖🎙️ — voice commands control robot tools"
-                    : "AI READY 🎙️ — talk normally");
+            aiStatusText.setText("Gemini 3.1 Flash Live READY 🎙️ — you can interrupt naturally");
             temporaryEmotion(Emotion.EXCITED, 1000L);
         });
     }
@@ -765,9 +764,13 @@ public class MainActivity extends ComponentActivity implements
 
     @Override public void onUserSpeechStarted() {
         runOnUiThread(() -> {
+            // Listening takes priority over movement: stop the physical robot
+            // immediately whenever the owner begins speaking.
+            stopRobot();
             companion.pauseFor(4500L);
             faceView.setTalking(false);
             faceView.setEmotion(Emotion.CURIOUS);
+            statusText.setText("Listening 🎙️ — robot stopped");
         });
     }
 
