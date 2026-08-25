@@ -172,7 +172,10 @@ public class RealtimeVoiceController {
 
         status(this.provider.label + " connecting…");
 
-        if (this.provider == Provider.GEMINI && isRoboticsMode()) {
+        // Android is a client-to-server Live API client. Authenticate every
+        // Gemini Live WebSocket with a short-lived ephemeral token instead of
+        // putting the long-lived API key directly on the WebSocket request.
+        if (this.provider == Provider.GEMINI) {
             requestEphemeralLiveTokenAndOpen(apiKey.trim());
             return;
         }
@@ -227,16 +230,16 @@ public class RealtimeVoiceController {
                 sessionReady = false;
                 stopMicrophone();
                 stopPlayback();
-                if (code == 1008 && isRoboticsMode()) {
+                if (code == 1008 && RealtimeVoiceController.this.provider == Provider.GEMINI) {
                     String r = reason == null ? "" : reason;
                     if (r.toLowerCase().contains("authentication") || r.toLowerCase().contains("oauth")) {
-                        status("Gemini Robotics disconnected (1008): authentication rejected. "
-                                + "Check the saved Gemini key, then tap TEST KEY. "
+                        status("Gemini Live disconnected (1008): session authentication rejected. "
+                                + "The app now uses an ephemeral Live token. "
                                 + (r.isEmpty() ? "" : "Server: " + r));
                     } else {
-                        status("Gemini Robotics disconnected (1008)"
+                        status("Gemini Live disconnected (1008)"
                                 + (r.isEmpty() ? "" : ": " + r)
-                                + " — setup/access rejected by the Live API");
+                                + " — Live API rejected the session");
                     }
                 } else {
                     status("AI disconnected (" + code + ")"
@@ -268,14 +271,10 @@ public class RealtimeVoiceController {
 
     private void reconnectGemini() {
         if (manualDisconnect || reconnectApiKey == null || reconnectApiKey.isEmpty()) return;
-        if (isRoboticsMode()) {
-            requestEphemeralLiveTokenAndOpen(reconnectApiKey);
-            return;
-        }
-        Request request;
-        try { request = buildRequest(reconnectApiKey); }
-        catch (Exception e) { status("Gemini retry config error: " + e.getMessage()); return; }
-        openSocket(request);
+
+        // Ephemeral tokens are intentionally short-lived / single-session.
+        // Provision a fresh token for every new Gemini Live socket.
+        requestEphemeralLiveTokenAndOpen(reconnectApiKey);
     }
 
     private static boolean isGeminiLiveModel(String model) {
@@ -294,8 +293,8 @@ public class RealtimeVoiceController {
 
     /**
      * Provisions a short-lived token for the Gemini Live API, then uses that
-     * token to authenticate the Robotics WebSocket. This is Google's documented
-     * client-to-server Live API flow for mobile/web clients.
+     * token to authenticate the WebSocket. This is the correct client-to-server
+     * Live API authentication flow for an Android/mobile client.
      */
     private void requestEphemeralLiveTokenAndOpen(String apiKey) {
         final String cleanKey = apiKey == null ? "" : apiKey.trim();
@@ -304,10 +303,30 @@ public class RealtimeVoiceController {
             return;
         }
 
-        status("Gemini Robotics: creating secure Live token…");
+        status("Gemini Live: creating secure session token…");
 
         JSONObject bodyJson = new JSONObject();
-        try { bodyJson.put("uses", 1); } catch (JSONException ignored) { }
+        try {
+            bodyJson.put("uses", 1);
+
+            // Lock the temporary credential to this Live model and AUDIO output.
+            // The rest of the session setup (system instructions, tools, VAD, etc.)
+            // is still sent in configureGeminiSession().
+            JSONObject constraints = new JSONObject();
+            constraints.put("model", "models/" + model);
+
+            JSONObject constraintsConfig = new JSONObject();
+            JSONArray responseModalities = new JSONArray();
+            responseModalities.put("AUDIO");
+            constraintsConfig.put("responseModalities", responseModalities);
+
+            constraints.put("config", constraintsConfig);
+            bodyJson.put("liveConnectConstraints", constraints);
+        } catch (JSONException e) {
+            status("Gemini Live token config error: " + e.getMessage());
+            if (listener != null) listener.onAiDisconnected();
+            return;
+        }
 
         okhttp3.RequestBody body = okhttp3.RequestBody.create(
                 bodyJson.toString(),
@@ -322,7 +341,7 @@ public class RealtimeVoiceController {
 
         client.newCall(tokenRequest).enqueue(new Callback() {
             @Override public void onFailure(Call call, IOException e) {
-                status("Gemini Robotics token error: "
+                status("Gemini Live token error: "
                         + (e == null || e.getMessage() == null ? "network error" : e.getMessage()));
                 if (listener != null) listener.onAiDisconnected();
             }
@@ -335,7 +354,7 @@ public class RealtimeVoiceController {
                 if (!response.isSuccessful()) {
                     String detail = responseText == null ? "" : responseText.trim();
                     if (detail.length() > 260) detail = detail.substring(0, 260);
-                    status("Gemini Robotics token rejected: HTTP " + response.code()
+                    status("Gemini Live token rejected: HTTP " + response.code()
                             + (detail.isEmpty() ? "" : " — " + detail));
                     if (listener != null) listener.onAiDisconnected();
                     response.close();
@@ -350,24 +369,24 @@ public class RealtimeVoiceController {
                 response.close();
 
                 if (tokenName.isEmpty()) {
-                    status("Gemini Robotics token error: server returned no token name");
+                    status("Gemini Live token error: server returned no token name");
                     if (listener != null) listener.onAiDisconnected();
                     return;
                 }
 
                 try {
-                    Request request = buildGeminiRequestWithEphemeralToken(tokenName);
-                    status("Gemini Robotics secure Live token ready — opening socket…");
+                    Request request = buildGeminiLiveRequestWithEphemeralToken(tokenName);
+                    status("Gemini Live token ready — opening secure socket…");
                     openSocket(request);
                 } catch (Exception e) {
-                    status("Gemini Robotics socket config error: " + e.getMessage());
+                    status("Gemini Live socket config error: " + e.getMessage());
                     if (listener != null) listener.onAiDisconnected();
                 }
             }
         });
     }
 
-    private Request buildGeminiRequestWithEphemeralToken(String tokenName) {
+    private Request buildGeminiLiveRequestWithEphemeralToken(String tokenName) {
         String cleanToken = tokenName == null ? "" : tokenName.trim();
         if (cleanToken.isEmpty()) throw new IllegalArgumentException("Live token is empty");
 
@@ -377,33 +396,16 @@ public class RealtimeVoiceController {
 
         return new Request.Builder()
                 .url(url)
-                .addHeader("x-goog-api-client", "mirobotai-android/1.7.3")
+                .addHeader("x-goog-api-client", "mirobotai-android/1.8.1")
                 .build();
     }
 
     private Request buildRequest(String apiKey) {
         if (provider == Provider.GEMINI) {
-            // Gemini keys copied from AI Studio can contain an accidental trailing
-            // newline/space. The HTTPS key test already trimmed the key, but the
-            // WebSocket path did not, which could make the Live handshake reject
-            // authentication even though the key test passed.
-            String cleanKey = apiKey == null ? "" : apiKey.trim();
-            if (cleanKey.isEmpty()) {
-                throw new IllegalArgumentException("Gemini API key is empty");
-            }
-
-            String url = "wss://generativelanguage.googleapis.com/ws/" +
-                    "google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=" +
-                    Uri.encode(cleanKey);
-
-            // Google documents ?key= for raw Live WebSockets. We also send the
-            // Gemini x-goog-api-key header so both standard AIza keys and the newer
-            // AI Studio authorization-key flow can authenticate at the HTTP upgrade.
-            // Never use `Authorization: Bearer <API_KEY>` for a Gemini API key.
-            return new Request.Builder()
-                    .url(url)
-                    .addHeader("x-goog-api-key", cleanKey)
-                    .build();
+            // Gemini Live on Android is opened through
+            // requestEphemeralLiveTokenAndOpen(). Reaching this path would mean
+            // the caller accidentally bypassed the client authentication flow.
+            throw new IllegalStateException("Gemini Live requires an ephemeral session token");
         }
 
         String endpoint = customEndpoint;

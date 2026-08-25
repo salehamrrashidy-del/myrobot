@@ -144,3 +144,10 @@ If WebSocket 1008 reports invalid authentication again, the app now identifies i
 - Android AEC + noise suppression are enabled when available.
 - Physical robot stops immediately whenever the user begins speaking.
 - Existing movement tools and Edge Guard safety remain active.
+
+
+## v1.8.1 — Gemini Live authentication fix
+- Fixed the 1008 authentication failure in Gemini 3.1 Flash Live.
+- All Gemini Live sessions now provision and use an ephemeral token.
+- The saved long-lived Gemini API key is used only to provision the temporary token.
+- Barge-in, motor stop-on-speech, tools, and Edge Guard remain enabled.
