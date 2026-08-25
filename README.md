@@ -120,3 +120,14 @@ With default inversion settings and bounded pulses:
 - Removed optional Robotics VAD/realtime setup fields that can be rejected.
 - Simplified the Robotics function-tool list while preserving `robot_move`.
 - Added clearer WebSocket 1008 diagnostics.
+
+## v1.7.2 — Gemini Robotics authentication fix
+
+The Robotics WebSocket authentication path now:
+- trims accidental whitespace/newlines from the saved Gemini key before connecting;
+- keeps the official Live API `?key=` authentication;
+- also sends `x-goog-api-key` during the WebSocket HTTP upgrade for current AI Studio auth keys;
+- uses `x-goog-api-key` for the in-app Gemini key/model test;
+- never treats a Gemini API key as an OAuth Bearer token.
+
+If WebSocket 1008 reports invalid authentication again, the app now identifies it as an authentication-stage failure. At that point no `robot_move` tool call has fired and no movement command has reached BLE/motors.

@@ -212,9 +212,16 @@ public class RealtimeVoiceController {
                 stopMicrophone();
                 stopPlayback();
                 if (code == 1008 && isRoboticsMode()) {
-                    status("Gemini Robotics disconnected (1008)"
-                            + (reason == null || reason.isEmpty() ? "" : ": " + reason)
-                            + " — setup/access rejected by the Live API");
+                    String r = reason == null ? "" : reason;
+                    if (r.toLowerCase().contains("authentication") || r.toLowerCase().contains("oauth")) {
+                        status("Gemini Robotics disconnected (1008): authentication rejected. "
+                                + "Check the saved Gemini key, then tap TEST KEY. "
+                                + (r.isEmpty() ? "" : "Server: " + r));
+                    } else {
+                        status("Gemini Robotics disconnected (1008)"
+                                + (r.isEmpty() ? "" : ": " + r)
+                                + " — setup/access rejected by the Live API");
+                    }
                 } else {
                     status("AI disconnected (" + code + ")"
                             + (reason == null || reason.isEmpty() ? "" : ": " + reason));
@@ -269,9 +276,16 @@ public class RealtimeVoiceController {
                 stopMicrophone();
                 stopPlayback();
                 if (code == 1008 && isRoboticsMode()) {
-                    status("Gemini Robotics disconnected (1008)"
-                            + (reason == null || reason.isEmpty() ? "" : ": " + reason)
-                            + " — setup/access rejected by the Live API");
+                    String r = reason == null ? "" : reason;
+                    if (r.toLowerCase().contains("authentication") || r.toLowerCase().contains("oauth")) {
+                        status("Gemini Robotics disconnected (1008): authentication rejected. "
+                                + "Check the saved Gemini key, then tap TEST KEY. "
+                                + (r.isEmpty() ? "" : "Server: " + r));
+                    } else {
+                        status("Gemini Robotics disconnected (1008)"
+                                + (r.isEmpty() ? "" : ": " + r)
+                                + " — setup/access rejected by the Live API");
+                    }
                 } else {
                     status("AI disconnected (" + code + ")"
                             + (reason == null || reason.isEmpty() ? "" : ": " + reason));
@@ -306,9 +320,27 @@ public class RealtimeVoiceController {
 
     private Request buildRequest(String apiKey) {
         if (provider == Provider.GEMINI) {
+            // Gemini keys copied from AI Studio can contain an accidental trailing
+            // newline/space. The HTTPS key test already trimmed the key, but the
+            // WebSocket path did not, which could make the Live handshake reject
+            // authentication even though the key test passed.
+            String cleanKey = apiKey == null ? "" : apiKey.trim();
+            if (cleanKey.isEmpty()) {
+                throw new IllegalArgumentException("Gemini API key is empty");
+            }
+
             String url = "wss://generativelanguage.googleapis.com/ws/" +
-                    "google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=" + Uri.encode(apiKey);
-            return new Request.Builder().url(url).build();
+                    "google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=" +
+                    Uri.encode(cleanKey);
+
+            // Google documents ?key= for raw Live WebSockets. We also send the
+            // Gemini x-goog-api-key header so both standard AIza keys and the newer
+            // AI Studio authorization-key flow can authenticate at the HTTP upgrade.
+            // Never use `Authorization: Bearer <API_KEY>` for a Gemini API key.
+            return new Request.Builder()
+                    .url(url)
+                    .addHeader("x-goog-api-key", cleanKey)
+                    .build();
         }
 
         String endpoint = customEndpoint;
@@ -339,9 +371,14 @@ public class RealtimeVoiceController {
         Request req;
         if (provider == Provider.GEMINI) {
             String testModel = (model == null || model.trim().isEmpty()) ? Provider.GEMINI.defaultModel : model.trim();
+            String cleanKey = apiKey.trim();
             String url = "https://generativelanguage.googleapis.com/v1beta/models/"
-                    + Uri.encode(testModel) + "?key=" + Uri.encode(apiKey.trim());
-            req = new Request.Builder().url(url).get().build();
+                    + Uri.encode(testModel);
+            req = new Request.Builder()
+                    .url(url)
+                    .addHeader("x-goog-api-key", cleanKey)
+                    .get()
+                    .build();
         } else {
             req = new Request.Builder()
                     .url("https://api.openai.com/v1/models")
