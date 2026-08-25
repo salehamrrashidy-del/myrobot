@@ -211,7 +211,14 @@ public class RealtimeVoiceController {
                 sessionReady = false;
                 stopMicrophone();
                 stopPlayback();
-                status("AI disconnected (" + code + ")" + (reason == null || reason.isEmpty() ? "" : ": " + reason));
+                if (code == 1008 && isRoboticsMode()) {
+                    status("Gemini Robotics disconnected (1008)"
+                            + (reason == null || reason.isEmpty() ? "" : ": " + reason)
+                            + " — setup/access rejected by the Live API");
+                } else {
+                    status("AI disconnected (" + code + ")"
+                            + (reason == null || reason.isEmpty() ? "" : ": " + reason));
+                }
                 if (listener != null) listener.onAiDisconnected();
             }
 
@@ -261,7 +268,14 @@ public class RealtimeVoiceController {
                 sessionReady = false;
                 stopMicrophone();
                 stopPlayback();
-                status("AI disconnected (" + code + ")" + (reason == null || reason.isEmpty() ? "" : ": " + reason));
+                if (code == 1008 && isRoboticsMode()) {
+                    status("Gemini Robotics disconnected (1008)"
+                            + (reason == null || reason.isEmpty() ? "" : ": " + reason)
+                            + " — setup/access rejected by the Live API");
+                } else {
+                    status("AI disconnected (" + code + ")"
+                            + (reason == null || reason.isEmpty() ? "" : ": " + reason));
+                }
                 if (listener != null) listener.onAiDisconnected();
             }
             @Override public void onFailure(WebSocket webSocket, Throwable t, Response response) {
@@ -501,22 +515,26 @@ public class RealtimeVoiceController {
 
             setup.put("generationConfig", generationConfig);
 
-            // The phone's speaker is close to its microphone. Gemini Live's default
-            // behavior is to interrupt the current reply whenever it detects new
-            // audio activity. That made the robot hear its own voice and cut itself
-            // off. Keep automatic VAD, but do not allow activity to interrupt a
-            // response. We also locally pause mic upload while the robot is speaking.
-            JSONObject automaticActivityDetection = new JSONObject();
-            automaticActivityDetection.put("disabled", false);
-            automaticActivityDetection.put("startOfSpeechSensitivity", "START_SENSITIVITY_LOW");
-            automaticActivityDetection.put("endOfSpeechSensitivity", "END_SENSITIVITY_LOW");
-            automaticActivityDetection.put("prefixPaddingMs", 80);
-            automaticActivityDetection.put("silenceDurationMs", 450);
+            // IMPORTANT FOR GEMINI ROBOTICS ER 2 STREAMING:
+            // Keep the initial setup intentionally minimal and aligned with Google's
+            // robotics streaming example. The robotics endpoint supports audio input
+            // with default server-side activity detection, so do not send optional
+            // realtimeInputConfig/VAD fields here. Some unsupported Live options can
+            // cause WebSocket close code 1008 during setup.
+            if (!roboticsStreaming) {
+                // These VAD options are retained only for normal Gemini Live audio models.
+                JSONObject automaticActivityDetection = new JSONObject();
+                automaticActivityDetection.put("disabled", false);
+                automaticActivityDetection.put("startOfSpeechSensitivity", "START_SENSITIVITY_LOW");
+                automaticActivityDetection.put("endOfSpeechSensitivity", "END_SENSITIVITY_LOW");
+                automaticActivityDetection.put("prefixPaddingMs", 80);
+                automaticActivityDetection.put("silenceDurationMs", 450);
 
-            JSONObject realtimeInputConfig = new JSONObject();
-            realtimeInputConfig.put("automaticActivityDetection", automaticActivityDetection);
-            realtimeInputConfig.put("activityHandling", "NO_INTERRUPTION");
-            setup.put("realtimeInputConfig", realtimeInputConfig);
+                JSONObject realtimeInputConfig = new JSONObject();
+                realtimeInputConfig.put("automaticActivityDetection", automaticActivityDetection);
+                realtimeInputConfig.put("activityHandling", "NO_INTERRUPTION");
+                setup.put("realtimeInputConfig", realtimeInputConfig);
+            }
 
             // Physical capabilities are exposed as BLOCKING tools, which is the
             // Robotics ER 2 streaming pattern. The app still owns motor values and safety.
@@ -530,25 +548,28 @@ public class RealtimeVoiceController {
                             "Forward can be refused by Edge Guard. Backward is refused while Edge Guard is enabled because the rear edge is not visible.",
                     objectSchema(moveProps, "direction")));
 
-            // Legacy tools are kept so older prompts/sessions still work.
-            declarations.put(functionDecl(
-                    "robot_stop",
-                    "Immediately stop the physical robot.",
-                    new JSONObject()));
+            // Keep the Robotics ER 2 tool list simple and explicit. Older aliases
+            // are only exposed to non-robotics Gemini Live models.
+            if (!roboticsStreaming) {
+                declarations.put(functionDecl(
+                        "robot_stop",
+                        "Immediately stop the physical robot.",
+                        new JSONObject()));
 
-            JSONObject turnProps = new JSONObject();
-            turnProps.put("direction", enumStringSchema("left", "right"));
-            declarations.put(functionDecl(
-                    "robot_turn",
-                    "Legacy small left/right turn tool. Prefer robot_move.",
-                    objectSchema(turnProps, "direction")));
+                JSONObject turnProps = new JSONObject();
+                turnProps.put("direction", enumStringSchema("left", "right"));
+                declarations.put(functionDecl(
+                        "robot_turn",
+                        "Legacy small left/right turn tool. Prefer robot_move.",
+                        objectSchema(turnProps, "direction")));
 
-            JSONObject nudgeProps = new JSONObject();
-            nudgeProps.put("direction", enumStringSchema("forward"));
-            declarations.put(functionDecl(
-                    "robot_nudge",
-                    "Legacy short forward nudge tool. Prefer robot_move.",
-                    objectSchema(nudgeProps, "direction")));
+                JSONObject nudgeProps = new JSONObject();
+                nudgeProps.put("direction", enumStringSchema("forward"));
+                declarations.put(functionDecl(
+                        "robot_nudge",
+                        "Legacy short forward nudge tool. Prefer robot_move.",
+                        objectSchema(nudgeProps, "direction")));
+            }
 
             JSONObject enabledProps = new JSONObject();
             JSONObject boolSchema = new JSONObject();

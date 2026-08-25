@@ -113,3 +113,10 @@ With default inversion settings and bounded pulses:
 - left (`delta=11`) -> axisA=117, axisB=139
 - right (`delta=11`) -> axisA=139, axisB=117
 - stop -> axisA=128, axisB=128
+
+
+## v1.7.1 — Robotics WebSocket 1008 fix
+- Robotics setup now uses the minimal official Live API configuration.
+- Removed optional Robotics VAD/realtime setup fields that can be rejected.
+- Simplified the Robotics function-tool list while preserving `robot_move`.
+- Added clearer WebSocket 1008 diagnostics.
