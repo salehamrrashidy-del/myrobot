@@ -1,4 +1,4 @@
-# MiRobotAI v1.7.0 — Edge Guard + AI robot control
+# MiRobotAI v1.0.0 — Edge Guard + AI robot control
 
 This build adds three big changes while keeping the saved API key and softer voice from v0.9.9.
 
@@ -83,51 +83,3 @@ Artifact: `MiRobotAI-v1.0.0-debug-apk`
 ## MiRobotAI v1.6 Gemini Robotics 2
 - Updated default Gemini model selection to Gemini Robotics 2.
 - Kept model configurable for API compatibility.
-
-
-## MiRobotAI v1.6.1 Fix
-- Restored a valid Gemini Live API model ID.
-- Gemini Robotics 2 remains a companion architecture mode, not an invalid API model string.
-
-
-## v1.7.0 — Gemini Robotics ER 2 Streaming
-
-- Default Gemini model is now the official `gemini-robotics-er-2-streaming-preview`.
-- Uses the Gemini Live API robotics streaming pattern: audio input, text output, BLOCKING robot tools.
-- Robotics text replies are spoken through local Android TTS so the robot remains conversational.
-- New canonical movement tool: `robot_move(direction)`.
-  - `forward` -> short safe forward pulse (blocked by Edge Guard if unsafe).
-  - `left` / `right` -> short in-place turn.
-  - `stop` -> immediate stop packet.
-  - `backward` -> blocked while Edge Guard is enabled because the front camera cannot observe the rear cliff; when Edge Guard is deliberately off, only a very short reverse pulse is allowed.
-- The debug/status panel now shows the exact command chain and motor-axis values that fire for voice movement requests.
-- Tool responses are sent after the movement pulse completes, matching BLOCKING function-call semantics more closely.
-
-### Voice movement path
-
-`microphone -> Gemini Robotics ER 2 -> robot_move(direction) -> MainActivity.onRobotToolCall -> local safety -> autoPulse -> sendMove -> MiRobotBleManager.move -> MiRobotProtocol.rockerPacket -> BLE`
-
-With default inversion settings and bounded pulses:
-- forward (`delta=9`) -> axisA=137, axisB=137
-- backward (`delta=8`, Edge Guard off only) -> axisA=120, axisB=120
-- left (`delta=11`) -> axisA=117, axisB=139
-- right (`delta=11`) -> axisA=139, axisB=117
-- stop -> axisA=128, axisB=128
-
-
-## v1.7.1 — Robotics WebSocket 1008 fix
-- Robotics setup now uses the minimal official Live API configuration.
-- Removed optional Robotics VAD/realtime setup fields that can be rejected.
-- Simplified the Robotics function-tool list while preserving `robot_move`.
-- Added clearer WebSocket 1008 diagnostics.
-
-## v1.7.2 — Gemini Robotics authentication fix
-
-The Robotics WebSocket authentication path now:
-- trims accidental whitespace/newlines from the saved Gemini key before connecting;
-- keeps the official Live API `?key=` authentication;
-- also sends `x-goog-api-key` during the WebSocket HTTP upgrade for current AI Studio auth keys;
-- uses `x-goog-api-key` for the in-app Gemini key/model test;
-- never treats a Gemini API key as an OAuth Bearer token.
-
-If WebSocket 1008 reports invalid authentication again, the app now identifies it as an authentication-stage failure. At that point no `robot_move` tool call has fired and no movement command has reached BLE/motors.
