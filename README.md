@@ -151,3 +151,10 @@ If WebSocket 1008 reports invalid authentication again, the app now identifies i
 - All Gemini Live sessions now provision and use an ephemeral token.
 - The saved long-lived Gemini API key is used only to provision the temporary token.
 - Barge-in, motor stop-on-speech, tools, and Edge Guard remain enabled.
+
+
+## v1.8.2 — Gemini 3.1 Flash Live direct auth
+- Uses Google's documented raw WebSocket `?key=` authentication.
+- Removes the `/auth_tokens` call from the normal connection path.
+- Sends no duplicate Gemini auth header on the Live WebSocket.
+- Adds local AQ./AIza key-type diagnostics.
